@@ -7,7 +7,7 @@ import streamlit as st
 st.set_page_config(page_title="교육용 PACS", page_icon="🩻", layout="wide")
 
 st.title("🩻 교육용 웹 PACS")
-st.caption("흉부 X-ray DICOM 영상 품질 점검 · 모의 케이스 전용 (실제 진단용 아님)")
+st.caption("X-ray·CT·MRI DICOM 영상 품질 점검 · 모의 케이스 전용 (실제 진단용 아님)")
 
 # TODO(A): Firebase Authentication 로그인 구현 후 아래 임시 상태를 교체
 if "user" not in st.session_state:

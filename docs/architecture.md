@@ -66,7 +66,7 @@ flowchart TD
     H --> C["케이스 목록<br/>검색·필터"]
     H --> Q["품질 점검 현황<br/>(관리자)"]
 
-    C -->|방사선사| UP["DICOM 업로드"]
+    C -->|방사선사| UP["DICOM 업로드<br/>X-ray 1장 / CT·MRI 시리즈"]
     UP --> QC{"자동 점검"}
     QC -->|통과| CD["케이스 상세"]
     QC -->|실패| RJ["재촬영 요청<br/>사유 표시"]
@@ -74,7 +74,7 @@ flowchart TD
 
     C --> CD
     CD -->|관리자| AS["판독의 배정"]
-    CD -->|판독의| V["영상 뷰어<br/>윈도우잉·확대·이동"]
+    CD -->|판독의| V["영상 뷰어<br/>윈도우잉·확대·이동<br/>단면 넘기기(CT·MRI)"]
     V --> PR["알고리즘 적용<br/>원본/결과 비교"]
     PR --> ROI["ROI 분석<br/>통계·히스토그램"]
     PR --> HIS["처리 이력<br/>불러오기·재실행"]
@@ -138,27 +138,28 @@ sequenceDiagram
     participant FS as storage/
     participant DB as Firestore
 
-    R->>ST: .dcm 파일 업로드
-    ST->>SV: register_image(user, file)
+    R->>ST: .dcm 1개 또는 여러 개 / .zip 업로드
+    ST->>SV: register_series(user, files)
     SV->>SV: require_role(radiographer)
-    SV->>DI: load_dicom(file)
-    alt DICOM 아님 / 픽셀 없음
+    SV->>DI: load_series(files)
+    alt DICOM 아님 / 픽셀 없음 / 지원 안 하는 촬영 종류
         DI-->>SV: InvalidDicomError
         SV-->>ST: 실패 사유
-        ST-->>R: "DICOM 형식이 아닙니다"
+        ST-->>R: "DICOM 형식이 아닙니다" 등
     else 정상
-        DI-->>SV: 픽셀, 헤더
-        SV->>QA: tag_check(헤더)
-        SV->>QA: image_quality(윈도우잉된 영상)
+        DI-->>SV: 정렬된 볼륨 (N×H×W), 시리즈 정보
+        SV->>QA: tag_check(헤더, modality)
+        SV->>QA: series_check(단면별 헤더) (CT·MRI)
+        SV->>QA: image_quality(대표 단면, modality)
         QA-->>SV: qc 결과 (통과/실패, 사유)
         SV->>SV: 개인정보 태그 제거
-        SV->>FS: original.dcm.tmp 저장
+        SV->>FS: original.tmp/ 폴더에 저장
         SV->>DB: case, image, case_history 기록
         alt DB 기록 실패
-            SV->>FS: .tmp 삭제
+            SV->>FS: 임시 폴더 삭제
             SV-->>ST: 저장 실패
         else 성공
-            SV->>FS: .tmp → original.dcm
+            SV->>FS: original.tmp/ → original/
             SV-->>ST: 상태 (접수 또는 재촬영 요청), qc 사유
             ST-->>R: 점검 결과 표시
         end
@@ -176,15 +177,16 @@ sequenceDiagram
     participant FS as storage/
     participant DB as Firestore
 
-    D->>ST: 알고리즘·파라미터·ROI 선택 후 실행
-    ST->>SV: run_processing(user, image_id, algo, params, roi)
+    D->>ST: 단면·윈도우·알고리즘·파라미터·ROI 선택 후 실행
+    ST->>SV: run_processing(user, image_id, slice_index, window, algo, params, roi)
     SV->>SV: 담당자 확인, 상태가 검토 중인지 확인
     SV->>DB: 같은 run_key가 최근 10초 안에 있나?
     alt 중복 요청
         DB-->>SV: 있음
         SV-->>ST: 기존 결과 반환
     else 새 요청
-        SV->>AL: apply_*(영상, params)
+        SV->>SV: 해당 단면을 윈도우잉해 uint8 2D로 변환
+        SV->>AL: apply_*(단면, params)
         alt 파라미터 오류
             AL-->>SV: ValueError
             SV-->>ST: 오류 사유 (기록 안 함)
@@ -199,6 +201,23 @@ sequenceDiagram
     end
 ```
 
+### 4.4 촬영 종류별 차이
+
+등록·저장·처리·이력 흐름은 모든 촬영 종류가 같다. 아래 항목만 `modality` 값에 따라 달라진다.
+
+| 항목 | X-ray (CR·DX) | CT | MRI (MR) | 위치 |
+|---|---|---|---|---|
+| 업로드 | 파일 1개 | 시리즈 파일 여러 개 / .zip | 시리즈 파일 여러 개 / .zip | `core/dicom_io.load_series` |
+| 픽셀 값 | 장비마다 다름 | HU (Rescale 적용 후) | 단위 없음 | `core/dicom_io` |
+| 기본 윈도우 | 헤더 값, 없으면 자동 | 프리셋: 폐·종격동·뼈·뇌 | 자동 (하위 1%~상위 1%) | `WINDOW_PRESETS`, `auto_window` |
+| 뷰어 | 1장 | 단면 슬라이더 | 단면 슬라이더 | `pages/2_Viewer.py` |
+| 품질 점검 | 지표 + 태그 | 지표(대표 단면) + 태그 + 시리즈 구성 | 지표(대표 단면) + 태그 + 시리즈 구성 | `core/quality.py` |
+| 점검 기준 | `QC_THRESHOLDS["DX"]` | `QC_THRESHOLDS["CT"]` | `QC_THRESHOLDS["MR"]` | `core/quality.py` |
+
+알고리즘(`core/algorithms.py`)은 항상 **uint8 2D 단면 1장**을 받으므로 촬영 종류와 상관없이 그대로 쓴다.
+
+시리즈를 매번 디스크에서 다시 읽으면 단면을 넘길 때마다 느려진다. 한 번 읽은 볼륨은 `st.cache_data`로 `image_id` 기준 캐시한다.
+
 ## 5. 배포 구성 (JCloud)
 
 | 항목 | 값 |
@@ -207,7 +226,8 @@ sequenceDiagram
 | 실행 | `streamlit run app.py --server.address 0.0.0.0 --server.port 8501` (백그라운드) |
 | 열 포트 | 22 (SSH), 8501 (Streamlit) |
 | 비밀 정보 | 서버에 직접 복사: `.streamlit/secrets.toml`, 서비스 계정 JSON |
-| 영상 저장 | 서버 영구 디스크의 `storage/` |
+| 영상 저장 | 서버 영구 디스크의 `storage/`. CT·MRI 때문에 여유 용량 수 GB 필요 |
+| 업로드 한도 | `.streamlit/config.toml`의 `maxUploadSize = 500` (MB) |
 | 업데이트 | `git pull` 후 앱 재시작 |
 
 JCloud 접속이 확인되면 README의 배포 절차를 채운다.
