@@ -1,0 +1,9 @@
+streamlit>=1.40
+numpy>=1.26
+opencv-python-headless>=4.10
+pydicom>=3.0
+firebase-admin>=6.5
+requests>=2.32
+pytest>=8.0
+# 압축된 DICOM(JPEG 등)을 읽어야 하면 주석 해제
+# pylibjpeg[all]
