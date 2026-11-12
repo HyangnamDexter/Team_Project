@@ -125,6 +125,7 @@ erDiagram
 | window_center / window_width | number | `40` / `400` | 헤더 기본값. 없으면 촬영 종류별 기본값 |
 | qc | map | 아래 참고 | 특화 기능 점검 결과 |
 | is_current | bool | `true` | 재등록하면 이전 영상은 `false`가 되지만 지우지 않음 |
+| replaces_image_id | string \| null | `IMG-...a1b2` | 재등록한 영상이면 이전 영상 ID. 전후 비교(FR-58)에 사용 |
 | uploaded_by / uploaded_at | string / timestamp | | |
 
 `qc` 예시 (CT):
