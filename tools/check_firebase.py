@@ -11,7 +11,7 @@ from firebase_admin import credentials, firestore
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     try:
-        config = tomllib.loads((root / ".streamlit/secrets.toml").read_text())
+        config = tomllib.loads((root / ".streamlit/secrets.toml").read_text(encoding="utf-8"))
         path = Path(config["firebase"]["service_account_path"])
         if not path.is_absolute():
             path = root / path

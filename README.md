@@ -22,7 +22,7 @@ docs/               설계 문서 (보고서에 활용)
 ## 로컬 실행
 ```bash
 python -m venv venv
-venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
+venv\Scripts\activate
 pip install -r requirements.txt
 copy .streamlit\secrets.toml.example .streamlit\secrets.toml   # 값 채우기
 streamlit run app.py
@@ -53,24 +53,10 @@ pytest
 ## JCloud 배포
 TODO(A): 접속 확인 후 작성
 
-## B 첫 주 작업: DICOM 읽기·윈도우잉
+## DICOM 모듈 사용법
 
-작업 브랜치: `KIMJOUN`. `load_dicom`, `auto_window`, `apply_window`는
-Firebase 없이 실행할 수 있습니다. Python 3.12 이상 환경을 권장합니다.
-Linux/WSL에서 프로젝트 전용 환경을 준비하려면:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m pytest tests/test_dicom_io.py -q
-python -m pytest -q
-python -m streamlit run app.py
-```
-
-`tests/test_dicom_io.py`는 합성 DICOM을 생성하므로 샘플·인증 키가 필요하지 않습니다.
-실제 입력은 단일 프레임 CR/DX/CT/MR 흑백 영상이며, 압축 영상은 별도 디코더가
-필요할 수 있습니다. 시리즈·ZIP 읽기는 다음 주 구현 범위입니다.
+`load_dicom`, `auto_window`, `apply_window`는 단일 프레임 CR/DX/CT/MR 흑백 영상을
+읽고 화면 표시용 배열로 변환합니다. 압축 영상은 별도 디코더가 필요할 수 있습니다.
 
 ```python
 from core.dicom_io import load_dicom, apply_window
@@ -91,17 +77,10 @@ Rescale 적용 후 MONOCHROME1은 관측 범위에서 반전합니다. 반환 �
 윈도우 변환은 [DICOM LINEAR 규칙](https://dicom.nema.org/MEDICAL/dicom/2019a/output/chtml/part03/sect_C.11.2.html)을
 따릅니다. VOI LUT·SIGMOID·presentation LUT는 현재 지원하지 않습니다.
 
-### 아직 필요한 수동 준비
+### 샘플 데이터
 
-- A에게 Firebase 웹 API 키와 서비스 계정 파일을 받아 설정합니다.
-  `.streamlit/secrets.toml.example`을 `secrets.toml`로 복사하되,
-  서비스 계정 JSON은 저장소 밖에 두고 경로만 입력합니다.
 - [RSNA Kaggle 데이터](https://www.kaggle.com/c/rsna-pneumonia-detection-challenge/data)와
   [이용 규칙](https://www.kaggle.com/c/rsna-pneumonia-detection-challenge/rules)을
   본인 계정으로 확인하고 DICOM 10장을 `data/sample/`에 둡니다.
   [RSNA 원 제공자 조건](https://www.rsna.org/-/media/files/rsna/education/ai-resources-and-training/ai-image-challenge/pneumonia-detection-challenge-terms-of-use-and-attribution.pdf)도
-  확인하고, C 담당 `docs/data.md`에 실제 사용 파일·출처·이용 조건을 전달합니다.
-  합성 테스트 파일을 RSNA 샘플로 간주하지 않습니다.
-- 실제 샘플로 읽기·표시 변환을 확인하고, 파일과 비밀키가 Git에서 제외되는지 확인합니다.
-- PR #1은 코드 인터페이스 변경도 포함하므로 문서만의 변경으로 간주하지 말고
-  `auto_window`·시리즈 처리 약속까지 확인한 후 본인 GitHub 계정으로 리뷰합니다.
+  확인하고, 실제 사용 파일·출처·이용 조건을 `docs/data.md`에 기록합니다.

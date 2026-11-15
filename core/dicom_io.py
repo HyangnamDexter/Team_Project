@@ -40,7 +40,7 @@ def _number(ds, name, default=None):
         value = value[0]
     value = float(value)
     if not np.isfinite(value):
-        raise ValueError(f"{name} 값이 유효하지 않습니다.")
+        raise InvalidDicomError(f"{name} 값이 유효하지 않습니다.")
     return value
 
 
@@ -58,18 +58,18 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
         ds = pydicom.dcmread(file)  # force=True로 가짜 파일을 허용하지 않는다.
         modality = str(getattr(ds, "Modality", ""))
         if modality not in SUPPORTED_MODALITIES:
-            raise ValueError("지원하는 촬영 종류는 CR, DX, CT, MR입니다.")
+            raise InvalidDicomError("지원하는 촬영 종류는 CR, DX, CT, MR입니다.")
         photo = str(getattr(ds, "PhotometricInterpretation", ""))
         if photo not in {"MONOCHROME1", "MONOCHROME2"}:
-            raise ValueError("단일 프레임 흑백 영상만 지원합니다.")
+            raise InvalidDicomError("단일 프레임 흑백 영상만 지원합니다.")
         if int(getattr(ds, "NumberOfFrames", 1)) != 1:
-            raise ValueError("다중 프레임 영상은 아직 지원하지 않습니다.")
+            raise InvalidDicomError("다중 프레임 영상은 아직 지원하지 않습니다.")
         arr = _pixels(ds.pixel_array)
         arr = arr * _number(ds, "RescaleSlope", 1.0) + _number(ds, "RescaleIntercept", 0.0)
         center = _number(ds, "WindowCenter")
         width = _number(ds, "WindowWidth")
         if width is not None and width < 1:
-            raise ValueError("WindowWidth는 1 이상이어야 합니다.")
+            raise InvalidDicomError("WindowWidth는 1 이상이어야 합니다.")
         if photo == "MONOCHROME1":
             total = float(arr.min()) + float(arr.max())
             arr = total - arr
@@ -78,13 +78,14 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
         with np.errstate(over="ignore", invalid="ignore"):
             arr = arr.astype(np.float32)
         if not np.isfinite(arr).all():
-            raise ValueError("픽셀 변환 결과가 유효하지 않습니다.")
+            raise InvalidDicomError("픽셀 변환 결과가 유효하지 않습니다.")
+        instance_number = _number(ds, "InstanceNumber")
         header = {
             "modality": modality, "study_date": str(getattr(ds, "StudyDate", "")),
             "body_part": str(getattr(ds, "BodyPartExamined", "")),
             "rows": int(ds.Rows), "cols": int(ds.Columns),
             "series_uid": str(getattr(ds, "SeriesInstanceUID", "")),
-            "instance_number": _number(ds, "InstanceNumber"),
+            "instance_number": int(instance_number) if instance_number is not None else None,
             "slice_thickness": _number(ds, "SliceThickness"),
             "window_center": center, "window_width": width,
             "photometric_interpretation": photo,
@@ -96,6 +97,8 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
             value = getattr(ds, tag, None)
             header[key] = [float(v) for v in value] if value is not None else None
         return arr, header
+    except InvalidDicomError:
+        raise
     except Exception as exc:
         # 파서 예외에는 경로·태그 값 등이 포함될 수 있어 사용자 메시지는 고정한다.
         raise InvalidDicomError(
@@ -114,8 +117,11 @@ def load_series(files) -> tuple[np.ndarray, dict]:
       "headers": [단면별 헤더 dict, 정렬된 순서], "rows", "cols", ...}
     - 촬영 종류가 SUPPORTED_MODALITIES 가 아니거나, 단면 크기가 서로 다르면 InvalidDicomError
       (시리즈 혼입·단면 누락 같은 '점검' 항목은 거절하지 않고 core/quality.series_check 가 판정)
+    - 구현 시 A3 등록 서비스와 데이터셋 전달 방식을 맞춘다.
+      개인정보 태그를 제거한 뒤 DICOM을 저장할 수 있도록 단면별 pydicom Dataset이 필요하다.
     """
     raise NotImplementedError
+
 
 def auto_window(pixels: np.ndarray, low_pct: float = 1.0,
                 high_pct: float = 99.0) -> tuple[float, float]:

@@ -98,11 +98,37 @@ def test_monochrome1(dicom_file):
                                   255 - original)
 
 
-@pytest.mark.parametrize('tags', [dict(Modality='US'), dict(NumberOfFrames=2),
-                                  dict(PhotometricInterpretation='RGB'), dict(WindowWidth=0)])
-def test_reject_unsupported(dicom_file, tags):
-    with pytest.raises(InvalidDicomError):
+@pytest.mark.parametrize('tags,message', [
+    (dict(Modality='US'), '지원하는 촬영 종류는 CR, DX, CT, MR입니다.'),
+    (dict(NumberOfFrames=2), '다중 프레임 영상은 아직 지원하지 않습니다.'),
+    (dict(PhotometricInterpretation='RGB'), '단일 프레임 흑백 영상만 지원합니다.'),
+    (dict(WindowWidth=0), 'WindowWidth는 1 이상이어야 합니다.'),
+])
+def test_reject_unsupported(dicom_file, tags, message):
+    with pytest.raises(InvalidDicomError) as exc:
         load_dicom(dicom_file(**tags))
+    assert str(exc.value) == message
+
+
+@pytest.mark.parametrize('number', [1, -2, None])
+def test_instance_number_is_integer_or_none(dicom_file, number):
+    tags = {} if number is None else {'InstanceNumber': number}
+    _, header = load_dicom(dicom_file(**tags))
+    assert header['instance_number'] == number
+    if number is not None:
+        assert type(header['instance_number']) is int
+
+
+def test_parser_error_uses_fixed_message(monkeypatch):
+    def fail_read(file):
+        raise ValueError('private patient value or file path')
+
+    monkeypatch.setattr(pydicom, 'dcmread', fail_read)
+    with pytest.raises(InvalidDicomError) as exc:
+        load_dicom(BytesIO())
+    assert str(exc.value) == (
+        'DICOM을 읽을 수 없습니다. 파일 형식·픽셀·촬영 종류와 압축 디코더를 확인하세요.'
+    )
 
 
 def test_fake_and_missing_pixels(dicom_file):
