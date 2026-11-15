@@ -5,9 +5,36 @@ import numpy as np
 import pydicom
 import pytest
 from pydicom.dataset import FileDataset, FileMetaDataset
+from pydicom.data import get_testdata_file
 from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
 
 from core.dicom_io import InvalidDicomError, apply_window, auto_window, load_dicom
+
+
+@pytest.mark.parametrize('name,modality', [('CT_small.dcm', 'CT'), ('MR_small.dcm', 'MR')])
+def test_pydicom_example_read_and_window(name, modality):
+    path = get_testdata_file(name, download=False)
+    assert path is not None, f'pydicom 예제 파일이 필요합니다: {name}'
+    ds = pydicom.dcmread(path)
+    pixels, header = load_dicom(path)
+    expected = (ds.pixel_array.astype(np.float64)
+                * float(getattr(ds, 'RescaleSlope', 1))
+                + float(getattr(ds, 'RescaleIntercept', 0)))
+    np.testing.assert_allclose(pixels, expected.astype(np.float32))
+    assert pixels.dtype == np.float32
+    assert pixels.shape == (ds.Rows, ds.Columns)
+    assert header['modality'] == modality
+
+    windows = [auto_window(pixels)]
+    if header['window_center'] is not None and header['window_width'] is not None:
+        windows.append((header['window_center'], header['window_width']))
+    before = pixels.copy()
+    for center, width in windows:
+        image = apply_window(pixels, center, width)
+        assert image.shape == pixels.shape
+        assert image.dtype == np.uint8
+        assert image.min() < image.max()
+    np.testing.assert_array_equal(pixels, before)
 
 
 @pytest.fixture
