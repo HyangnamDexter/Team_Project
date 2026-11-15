@@ -1,4 +1,4 @@
-# 교육용 웹 PACS – 흉부 X-ray DICOM 품질 점검
+# 교육용 웹 PACS – X-ray·CT·MRI DICOM 품질 점검
 
 초급프로젝트 PBL 분반 Term Project. 공개 데이터와 모의 케이스로 동작하는 교육용 PACS이며, 실제 진단 용도가 아닙니다.
 
@@ -45,7 +45,9 @@ pytest
 - 테스트 계정 비밀번호는 LMS 제출란에만 적는다.
 
 ## 데이터
-- 출처: RSNA Pneumonia Detection Challenge (Kaggle) – 이용 조건 확인 후 `docs/data.md`에 기록
+- X-ray: RSNA Pneumonia Detection Challenge (Kaggle)
+- CT·MRI: TCIA 공개 컬렉션 (후보 선정 중)
+- 출처와 이용 조건은 확인 후 `docs/data.md`에 기록
 - 영상 파일은 저장소에 올리지 않는다 (`data/` 제외).
 
 ## JCloud 배포

@@ -9,6 +9,7 @@ RADIOGRAPHER = "radiographer"  # 방사선사: 케이스·영상 등록
 READER = "reader"              # 판독의: 처리·비교·메모
 MANAGER = "manager"            # 관리자: 배정·진행 현황
 ROLES = (RADIOGRAPHER, READER, MANAGER)
+ROLE_LABELS = {RADIOGRAPHER: "방사선사", READER: "판독의", MANAGER: "관리자"}
 
 # 상태
 RECEIVED = "접수"

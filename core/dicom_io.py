@@ -1,6 +1,9 @@
 """DICOM 읽기·표시 변환. 담당: B.
 
+지원 촬영 종류: X-ray(CR, DX), CT, MRI(MR).
 load_dicom은 단일 프레임 흑백 float32 배열을 반환한다.
+load_series는 향후 float32 [N, H, W] 볼륨을 반환할 인터페이스이며 아직 미구현이다.
+X-ray는 단면 수 N=1인 시리즈로 다룬다.
 apply_window 결과(uint8, 2D)를 알고리즘·품질 분석에 전달한다.
 MONOCHROME1은 이 모듈에서 반전하므로 화면에서 다시 반전하지 않는다.
 """
@@ -99,6 +102,20 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
             "DICOM을 읽을 수 없습니다. 파일 형식·픽셀·촬영 종류와 압축 디코더를 확인하세요."
         ) from exc
 
+
+def load_series(files) -> tuple[np.ndarray, dict]:
+    """파일 1개(X-ray) 또는 여러 개(CT·MRI, .zip 포함)를 읽어
+    (볼륨 float32 [N, H, W], 시리즈 정보 dict)를 반환한다.
+
+    - 각 파일을 load_dicom 으로 읽는다
+    - 단면 순서: ImagePositionPatient 를 ImageOrientationPatient 의 법선 방향으로 투영한 값 기준 정렬.
+      위치 태그가 없으면 InstanceNumber 기준
+    - 반환 dict 예: {"modality", "series_uid", "num_slices", "positions": [mm...] | None,
+      "headers": [단면별 헤더 dict, 정렬된 순서], "rows", "cols", ...}
+    - 촬영 종류가 SUPPORTED_MODALITIES 가 아니거나, 단면 크기가 서로 다르면 InvalidDicomError
+      (시리즈 혼입·단면 누락 같은 '점검' 항목은 거절하지 않고 core/quality.series_check 가 판정)
+    """
+    raise NotImplementedError
 
 def auto_window(pixels: np.ndarray, low_pct: float = 1.0,
                 high_pct: float = 99.0) -> tuple[float, float]:
