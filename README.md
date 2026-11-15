@@ -22,7 +22,7 @@ docs/               설계 문서 (보고서에 활용)
 ## 로컬 실행
 ```bash
 python -m venv venv
-venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
+venv\Scripts\activate
 pip install -r requirements.txt
 copy .streamlit\secrets.toml.example .streamlit\secrets.toml   # 값 채우기
 streamlit run app.py
@@ -52,3 +52,35 @@ pytest
 
 ## JCloud 배포
 TODO(A): 접속 확인 후 작성
+
+## DICOM 모듈 사용법
+
+`load_dicom`, `auto_window`, `apply_window`는 단일 프레임 CR/DX/CT/MR 흑백 영상을
+읽고 화면 표시용 배열로 변환합니다. 압축 영상은 별도 디코더가 필요할 수 있습니다.
+
+```python
+from core.dicom_io import load_dicom, apply_window
+
+pixels, header = load_dicom("data/sample/example.dcm")
+center, width = header["window_center"], header["window_width"]
+if center is None or width is None:
+    image = apply_window(pixels)
+else:
+    image = apply_window(pixels, center, width)
+# image: uint8 2D. st.image(image, clamp=True) 등으로 표시.
+```
+
+Rescale 적용 후 MONOCHROME1은 관측 범위에서 반전합니다. 반환 윈도우 중심도
+변환되므로 화면에서 추가 반전을 하지 않습니다. MONOCHROME1 반환값은
+표시를 위해 변환된 값이므로 원래 물리량으로 해석하지 않습니다.
+자동 윈도우는 기본 1~99 백분위이며 상수 영상은 회색으로 표시합니다.
+윈도우 변환은 [DICOM LINEAR 규칙](https://dicom.nema.org/MEDICAL/dicom/2019a/output/chtml/part03/sect_C.11.2.html)을
+따릅니다. VOI LUT·SIGMOID·presentation LUT는 현재 지원하지 않습니다.
+
+### 샘플 데이터
+
+- [RSNA Kaggle 데이터](https://www.kaggle.com/c/rsna-pneumonia-detection-challenge/data)와
+  [이용 규칙](https://www.kaggle.com/c/rsna-pneumonia-detection-challenge/rules)을
+  본인 계정으로 확인하고 DICOM 10장을 `data/sample/`에 둡니다.
+  [RSNA 원 제공자 조건](https://www.rsna.org/-/media/files/rsna/education/ai-resources-and-training/ai-image-challenge/pneumonia-detection-challenge-terms-of-use-and-attribution.pdf)도
+  확인하고, 실제 사용 파일·출처·이용 조건을 `docs/data.md`에 기록합니다.
