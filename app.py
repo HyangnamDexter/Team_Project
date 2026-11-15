@@ -20,7 +20,7 @@ if user is None:
     with left:
         with st.form("login", clear_on_submit=False):
             st.subheader("로그인")
-            email = st.text_input("이메일", placeholder="user001@test.com")
+            email = st.text_input("이메일", placeholder="test000@test.com")
             password = st.text_input("비밀번호", type="password")
             submitted = st.form_submit_button("로그인", type="primary", use_container_width=True)
         if submitted:
