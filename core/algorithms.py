@@ -6,14 +6,26 @@
 - 잘못된 파라미터는 ValueError 로 이유와 함께 알린다
 """
 from __future__ import annotations
-
+import cv2
 import numpy as np
 
 
 # --- 알고리즘 1: 명암·분포 조정 ---
 def apply_clahe(img: np.ndarray, clip_limit: float = 2.0, tile_size: int = 8) -> np.ndarray:
-    raise NotImplementedError  # TODO(C)
+    if not isinstance(img, np.ndarray) or img.ndim != 2 or img.size == 0:
+        raise ValueError("입력 영상은 비어 있지 않은 2D numpy 배열이어야 합니다.")
+    if img.dtype != np.uint8:
+        raise ValueError("입력 영상의 dtype은 uint8이어야 합니다.")
+    if clip_limit <= 0:
+        raise ValueError("clip_limit은 0보다 커야 합니다.")
+    if not isinstance(tile_size, int) or isinstance(tile_size, bool) or tile_size < 1:
+        raise ValueError("tile_size는 1 이상의 정수여야 합니다.")
 
+    clahe = cv2.createCLAHE(
+        clipLimit=float(clip_limit),
+        tileGridSize=(tile_size, tile_size),
+    )
+    return clahe.apply(img)
 
 # --- 알고리즘 2: 노이즈 제거·평활화 ---
 def apply_denoise(img: np.ndarray, method: str = "gaussian", ksize: int = 5) -> np.ndarray:
