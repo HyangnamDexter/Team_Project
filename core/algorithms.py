@@ -6,6 +6,7 @@
 - 잘못된 파라미터는 ValueError 로 이유와 함께 알린다
 """
 from __future__ import annotations
+
 import cv2
 import numpy as np
 
@@ -16,14 +17,24 @@ def apply_clahe(img: np.ndarray, clip_limit: float = 2.0, tile_size: int = 8) ->
         raise ValueError("입력 영상은 비어 있지 않은 2D numpy 배열이어야 합니다.")
     if img.dtype != np.uint8:
         raise ValueError("입력 영상의 dtype은 uint8이어야 합니다.")
-    if clip_limit <= 0:
-        raise ValueError("clip_limit은 0보다 커야 합니다.")
-    if not isinstance(tile_size, int) or isinstance(tile_size, bool) or tile_size < 1:
+    if (
+        isinstance(clip_limit, bool)
+        or not isinstance(clip_limit, (int, float, np.number))
+        or not np.isfinite(clip_limit)
+        or clip_limit <= 0
+    ):
+        raise ValueError("clip_limit은 0보다 큰 유한한 숫자여야 합니다.")
+    if (
+        isinstance(tile_size, bool)
+        or not isinstance(tile_size, (int, np.integer))
+        or tile_size < 1
+    ):
         raise ValueError("tile_size는 1 이상의 정수여야 합니다.")
 
+    tile_size_int = int(tile_size)
     clahe = cv2.createCLAHE(
         clipLimit=float(clip_limit),
-        tileGridSize=(tile_size, tile_size),
+        tileGridSize=(tile_size_int, tile_size_int),
     )
     return clahe.apply(img)
 
