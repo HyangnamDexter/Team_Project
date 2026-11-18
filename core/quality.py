@@ -1,18 +1,29 @@
-"""특화 기능: 영상 품질·DICOM 태그·시리즈 구성 자동 점검.
-담당: C(지표 계산, 기준값), B(태그 점검), A(시리즈 점검)
-
-점검 기준은 촬영 종류(modality)마다 다르다. CR·DX는 같은 X-ray 기준을 쓴다.
-"""
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 # 촬영 종류별 기준값. 숫자는 C가 실험으로 정한다 (docs/experiments/ 에 근거 기록).
 # 키 예: {"brightness_min", "brightness_max", "contrast_min", "sharpness_min"}
 QC_THRESHOLDS: dict[str, dict[str, float]] = {
-    "DX": {},  # TODO(C) X-ray
-    "CT": {},  # TODO(C)
-    "MR": {},  # TODO(C)
+    "DX": {
+        "brightness_min": 35.0,
+        "brightness_max": 220.0,
+        "contrast_min": 25.0,
+        "sharpness_min": 50.0,
+    },
+    "CT": {
+        "brightness_min": 25.0,
+        "brightness_max": 210.0,
+        "contrast_min": 30.0,
+        "sharpness_min": 80.0,
+    },
+    "MR": {
+        "brightness_min": 30.0,
+        "brightness_max": 215.0,
+        "contrast_min": 22.0,
+        "sharpness_min": 40.0,
+    },
 }
 QC_THRESHOLDS_VERSION = "v1"
 
@@ -22,12 +33,31 @@ def thresholds_for(modality: str) -> dict[str, float]:
     key = "DX" if modality == "CR" else modality
     if key not in QC_THRESHOLDS:
         raise ValueError(f"품질 기준이 없는 촬영 종류입니다: {modality}")
-    return QC_THRESHOLDS[key]
+    return QC_THRESHOLDS[key] # TODO(C)
 
 
 def sample_slices(num_slices: int, k: int = 5) -> list[int]:
     """품질 지표를 계산할 대표 단면 번호. 가운데 단면을 포함해 최대 k장을 고르게 고른다."""
-    raise NotImplementedError  # TODO(C)
+    if isinstance(num_slices, bool) or not isinstance(num_slices, (int, np.integer)) or num_slices <= 0:
+        raise ValueError(f"num_slices는 1 이상의 정수여야 합니다. (입력값: {num_slices!r})")
+    if isinstance(k, bool) or not isinstance(k, (int, np.integer)) or k <= 0:
+        raise ValueError(f"k는 1 이상의 정수여야 합니다. (입력값: {k!r})")
+
+    n = int(num_slices)
+    k_i = int(k)
+    mid = n // 2
+
+    if n <= k_i:
+        return list(range(n))
+    if k_i == 1:
+        return [mid]
+
+    indices = [int(round(v)) for v in np.linspace(0, n - 1, k_i)]
+    if mid not in indices:
+        closest_idx = min(range(len(indices)), key=lambda i: abs(indices[i] - mid))
+        indices[closest_idx] = mid
+
+    return sorted(indices) # TODO(C)
 
 
 def image_quality(img: np.ndarray, modality: str = "DX") -> dict:
@@ -35,7 +65,31 @@ def image_quality(img: np.ndarray, modality: str = "DX") -> dict:
 
     반환 예: {"brightness":.., "contrast":.., "sharpness":.., "issues": ["너무 어두움", ...]}
     """
-    raise NotImplementedError  # TODO(C)
+    if not isinstance(img, np.ndarray) or img.ndim != 2 or img.size == 0 or img.dtype != np.uint8:
+        raise ValueError("입력 영상은 비어 있지 않은 2D uint8 numpy.ndarray여야 합니다.")
+
+    rules = thresholds_for(modality)  # CR -> DX 자동 매핑 및 미지원 모달리티 ValueError
+
+    brightness = float(np.mean(img))
+    contrast = float(np.std(img))
+    sharpness = float(cv2.Laplacian(img, cv2.CV_64F).var())
+
+    issues: list[str] = []
+    if brightness < rules["brightness_min"]:
+        issues.append("너무 어두움")
+    if brightness > rules["brightness_max"]:
+        issues.append("너무 밝음")
+    if contrast < rules["contrast_min"]:
+        issues.append("대비 부족")
+    if sharpness < rules["sharpness_min"]:
+        issues.append("선명도 부족")
+
+    return {
+        "brightness": round(brightness, 2),
+        "contrast": round(contrast, 2),
+        "sharpness": round(sharpness, 2),
+        "issues": issues,
+    }   # TODO(C)
 
 
 def tag_check(header: dict, modality: str = "DX") -> dict:
