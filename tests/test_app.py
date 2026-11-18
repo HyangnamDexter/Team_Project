@@ -24,6 +24,16 @@ def test_logged_out_shows_only_login_form():
     assert not any(b.label == "로그아웃" for b in at.sidebar.button)
 
 
+@pytest.mark.parametrize("page", ["pages/0_Home.py", "pages/1_Cases.py", "pages/2_Viewer.py", "pages/3_Review.py"])
+def test_logged_out_page_shows_login_required(page):
+    # 로그인 전에도 페이지는 숨김 등록되어 있어서, 주소로 들어오면 각 페이지가 안내를 보여 준다
+    at = run()
+    at.switch_page(page).run()
+    assert not at.exception
+    assert any("로그인이 필요" in w.value for w in at.warning)
+    assert not at.title or at.title[0].value != "영상 뷰어"  # 페이지 내용은 보이지 않음
+
+
 def test_logged_in_shows_home_and_logout():
     at = run(USER)
     assert not at.exception
