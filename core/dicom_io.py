@@ -50,14 +50,16 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
     Rescale 적용 후 MONOCHROME1을 관측 범위의 min+max를 기준으로 반전한다.
     이 경우 window_center도 반전 배열의 LINEAR 좌표에 맞춰 변환한다.
     반환 헤더에는 환자 식별 값 대신 비어 있지 않은 태그 이름만 기록한다.
+    Modality 누락·빈 값은 modality="", missing_tags=["Modality"]로 기록한다.
+    촬영 종류가 명시된 경우 지원 목록을 검사한다.
     압축 영상은 pydicom 디코더가 설치된 경우에만 읽을 수 있다.
     """
     try:
         if hasattr(file, "seek"):
             file.seek(0)
         ds = pydicom.dcmread(file)  # force=True로 가짜 파일을 허용하지 않는다.
-        modality = str(getattr(ds, "Modality", ""))
-        if modality not in SUPPORTED_MODALITIES:
+        modality = str(getattr(ds, "Modality", "") or "").strip()
+        if modality and modality not in SUPPORTED_MODALITIES:
             raise InvalidDicomError("지원하는 촬영 종류는 CR, DX, CT, MR입니다.")
         photo = str(getattr(ds, "PhotometricInterpretation", ""))
         if photo not in {"MONOCHROME1", "MONOCHROME2"}:
@@ -81,7 +83,9 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
             raise InvalidDicomError("픽셀 변환 결과가 유효하지 않습니다.")
         instance_number = _number(ds, "InstanceNumber")
         header = {
-            "modality": modality, "study_date": str(getattr(ds, "StudyDate", "")),
+            "modality": modality,
+            "missing_tags": ["Modality"] if not modality else [],
+            "study_date": str(getattr(ds, "StudyDate", "")),
             "body_part": str(getattr(ds, "BodyPartExamined", "")),
             "rows": int(ds.Rows), "cols": int(ds.Columns),
             "series_uid": str(getattr(ds, "SeriesInstanceUID", "")),
