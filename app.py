@@ -1,52 +1,40 @@
-"""교육용 웹 PACS - 진입 화면 (로그인, 홈).
+"""교육용 웹 PACS - 진입점. 사이드바 메뉴(한글)와 로그인 상태를 여기서 정한다.
 
 실행: streamlit run app.py
+- 로그인 전: 로그인 페이지만 보인다 (FR-03)
+- 로그인 후: 홈·업무 메뉴와 사용자 정보·로그아웃 버튼이 보인다
+새 페이지를 만들면 pages/ 에 파일을 두고 아래 MENU 에 한 줄 추가한다.
 """
 import streamlit as st
 
 from core.workflow import ROLE_LABELS
-from services.auth import AuthError, current_user, sign_in, sign_out
+from services.auth import current_user, sign_out
 
 st.set_page_config(page_title="교육용 PACS", page_icon="🩻", layout="wide")
 
-st.title("🩻 교육용 웹 PACS")
-st.caption("X-ray·CT·MRI DICOM 영상 품질 점검 · 모의 케이스 전용 (실제 진단용 아님)")
+MENU = {
+    "": [
+        st.Page("pages/0_Home.py", title="홈", icon=":material/home:", default=True),
+    ],
+    "업무": [
+        st.Page("pages/1_Cases.py", title="케이스 목록", icon=":material/list_alt:"),
+        st.Page("pages/2_Viewer.py", title="영상 뷰어", icon=":material/image_search:"),
+        st.Page("pages/3_Review.py", title="검토", icon=":material/rate_review:"),
+    ],
+}
 
 user = current_user()
 
-# ---------- 로그인 전 ----------
 if user is None:
-    left, _ = st.columns([1, 1])
-    with left:
-        with st.form("login", clear_on_submit=False):
-            st.subheader("로그인")
-            email = st.text_input("이메일", placeholder="test000@test.com")
-            password = st.text_input("비밀번호", type="password")
-            submitted = st.form_submit_button("로그인", type="primary", use_container_width=True)
-        if submitted:
-            try:
-                with st.spinner("로그인 중..."):
-                    st.session_state.user = sign_in(email, password)
-                st.rerun()
-            except AuthError as err:
-                st.error(str(err))
-    st.stop()
+    page = st.navigation([st.Page("pages/0_Login.py", title="로그인", icon=":material/login:")])
+else:
+    page = st.navigation(MENU)
+    with st.sidebar:
+        st.markdown(f"**{user['email']}**")
+        st.caption(f"역할: {ROLE_LABELS.get(user['role'], user['role'])}")
+        if st.button("로그아웃", use_container_width=True):
+            sign_out()
+            st.rerun()
+        st.caption("교육용 모의 케이스 – 실제 진단용 아님")
 
-# ---------- 로그인 후 ----------
-with st.sidebar:
-    st.markdown(f"**{user['email']}**")
-    st.caption(f"역할: {ROLE_LABELS.get(user['role'], user['role'])}")
-    if st.button("로그아웃", use_container_width=True):
-        sign_out()
-        st.rerun()
-    st.caption("교육용 모의 케이스 – 실제 진단용 아님")
-
-st.success(f"{user['email']} 님, {ROLE_LABELS.get(user['role'], user['role'])} 역할로 로그인했습니다.")
-st.markdown(
-    """
-    **메뉴** (왼쪽 사이드바)
-    - 케이스 목록: 케이스·영상 등록과 검색
-    - 영상 뷰어: 원본/처리 결과 비교, ROI 분석
-    - 검토: 상태 변경, 메모·리포트, 처리 이력
-    """
-)
+page.run()
