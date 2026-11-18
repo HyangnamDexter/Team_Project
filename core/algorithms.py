@@ -7,13 +7,36 @@
 """
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 
 # --- 알고리즘 1: 명암·분포 조정 ---
 def apply_clahe(img: np.ndarray, clip_limit: float = 2.0, tile_size: int = 8) -> np.ndarray:
-    raise NotImplementedError  # TODO(C)
+    if not isinstance(img, np.ndarray) or img.ndim != 2 or img.size == 0:
+        raise ValueError("입력 영상은 비어 있지 않은 2D numpy 배열이어야 합니다.")
+    if img.dtype != np.uint8:
+        raise ValueError("입력 영상의 dtype은 uint8이어야 합니다.")
+    if (
+        isinstance(clip_limit, bool)
+        or not isinstance(clip_limit, (int, float, np.number))
+        or not np.isfinite(clip_limit)
+        or clip_limit <= 0
+    ):
+        raise ValueError("clip_limit은 0보다 큰 유한한 숫자여야 합니다.")
+    if (
+        isinstance(tile_size, bool)
+        or not isinstance(tile_size, (int, np.integer))
+        or tile_size < 1
+    ):
+        raise ValueError("tile_size는 1 이상의 정수여야 합니다.")
 
+    tile_size_int = int(tile_size)
+    clahe = cv2.createCLAHE(
+        clipLimit=float(clip_limit),
+        tileGridSize=(tile_size_int, tile_size_int),
+    )
+    return clahe.apply(img)
 
 # --- 알고리즘 2: 노이즈 제거·평활화 ---
 def apply_denoise(img: np.ndarray, method: str = "gaussian", ksize: int = 5) -> np.ndarray:
