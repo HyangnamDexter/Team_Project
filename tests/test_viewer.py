@@ -24,13 +24,15 @@ def viewer(monkeypatch, tmp_path):
 
     def read_sample(file):
         pixels = np.arange(100, dtype=np.float32).reshape(10, 10)
-        return pixels, {"modality": "CT", "missing_tags": [], "rows": 10, "cols": 10,
+        return pixels, {"modality": "DX", "missing_tags": [], "rows": 10, "cols": 10,
                         "window_center": 40.0, "window_width": 80.0}
 
     monkeypatch.setattr(Path, "glob", sample_glob)
     monkeypatch.setattr(dicom_io, "load_dicom", read_sample)
-    app = AppTest.from_file(str(PAGE), default_timeout=30)
+    app = AppTest.from_file(str(PAGE.parents[1] / "app.py"), default_timeout=30)
     app.session_state["user"] = {"uid": "test", "email": "test@example.com", "role": "reader"}
+    app.run()
+    app.switch_page("pages/2_Viewer.py")
     return app
 
 
@@ -67,12 +69,11 @@ def test_new_sample_resets_settings(viewer):
     assert viewer.number_input(key="viewer_center").value == 40.0
 
 
-def test_ct_preset_and_auto_window(viewer):
+def test_auto_window_without_ct_controls(viewer):
     viewer.run()
-    next(button for button in viewer.button if button.label == "프리셋 적용").click().run()
-    assert not viewer.exception
-    assert viewer.number_input(key="viewer_center").value == -600.0
-    assert viewer.number_input(key="viewer_width").value == 1500.0
+    assert not any(select.label == "CT 프리셋" for select in viewer.selectbox)
+    assert not any(button.label == "프리셋 적용" for button in viewer.button)
+    viewer.number_input(key="viewer_center").set_value(20.0).run()
     next(button for button in viewer.button if button.label == "자동 윈도우").click().run()
     assert not viewer.exception
     assert viewer.number_input(key="viewer_center").value == 50.0
@@ -132,3 +133,27 @@ def test_switch_sample_clears_measurement(viewer):
     next(select for select in viewer.selectbox if select.label == "샘플 파일").select_index(1).run()
     assert not viewer.exception
     assert viewer.session_state["viewer_points"] == []
+
+
+def test_return_from_home_restores_viewer_controls(viewer):
+    viewer.run()
+    viewer.slider(key="viewer_zoom").set_value(2.0).run()
+    viewer.switch_page("pages/0_Home.py").run()
+    viewer.switch_page("pages/2_Viewer.py").run()
+    assert not viewer.exception
+    assert viewer.number_input(key="viewer_center").value == 40.0
+    assert viewer.number_input(key="viewer_width").value == 80.0
+    assert viewer.slider(key="viewer_zoom").value == 1.0
+
+
+@pytest.mark.parametrize("modality", ["CT", "MR"])
+def test_viewer_rejects_non_xray(viewer, monkeypatch, modality):
+    def read(file):
+        return np.ones((10, 10), dtype=np.float32), {
+            "modality": modality, "window_center": 40.0, "window_width": 80.0,
+        }
+    monkeypatch.setattr(dicom_io, "load_dicom", read)
+    viewer.run()
+    assert not viewer.exception
+    assert any("X-ray(CR·DX) 단일 영상" in error.value for error in viewer.error)
+    assert not viewer.slider
