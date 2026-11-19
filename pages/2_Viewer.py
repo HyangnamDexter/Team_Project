@@ -1,11 +1,11 @@
-"""단일 DICOM 영상 뷰어. 담당: B."""
+"""X-ray 단일 DICOM 영상 뷰어. 담당: B."""
 from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
 import streamlit as st
 
-from core.dicom_io import InvalidDicomError, WINDOW_PRESETS, apply_window, auto_window, load_dicom
+from core.dicom_io import InvalidDicomError, apply_window, auto_window, load_dicom
 from core.viewer_geometry import measure_distance, viewport
 from ui.dicom_canvas import image_canvas
 from services.auth import require_login
@@ -63,6 +63,7 @@ user = require_login()
 st.session_state.setdefault("viewer_epoch", 0)
 st.session_state.setdefault("viewer_points", [])
 st.title("영상 뷰어")
+st.caption("X-ray 단일 DICOM 영상")
 
 with st.sidebar:
     source = st.radio("영상 선택 방법", ["샘플 영상", "파일 업로드"], horizontal=True)
@@ -78,7 +79,8 @@ with st.sidebar:
         file_id = (str(selected), selected.stat().st_mtime_ns, selected.stat().st_size)
         filename = selected.name
     else:
-        file = st.file_uploader("DICOM 파일", type=["dcm", "dicom"])
+        file = st.file_uploader("X-ray DICOM 파일 1개", type=["dcm", "dicom"],
+                                accept_multiple_files=False)
         if file is None:
             st.info("표시할 DICOM 파일을 선택하세요.")
             st.stop()
@@ -105,6 +107,13 @@ if st.session_state.get("viewer_file_id") != file_id:
     reset_view(center, width)
 
 pixels, header, default_center, default_width, auto_center, auto_width = st.session_state.viewer_data
+if header["modality"] and header["modality"] not in {"CR", "DX"}:
+    st.error("X-ray(CR·DX) 단일 영상만 선택하세요.")
+    st.stop()
+# 다른 업무 화면을 방문하면 Streamlit이 뷰어 위젯 상태를 정리할 수 있다.
+if any(key not in st.session_state for key in
+       ("viewer_center", "viewer_width", "viewer_zoom", "viewer_x", "viewer_y")):
+    reset_view(default_center, default_width)
 token = sha256(repr(file_id).encode()).hexdigest()
 accept_canvas_event(token, pixels.shape)
 st.caption(f"{filename} · {header['cols']} × {header['rows']} px · "
@@ -119,10 +128,6 @@ with controls:
     st.subheader("표시 설정")
     st.button("화면 초기화", on_click=reset_view, args=(default_center, default_width))
     st.button("자동 윈도우", on_click=set_window, args=(auto_center, auto_width))
-    if header["modality"] == "CT":
-        presets = WINDOW_PRESETS["CT"]
-        preset = st.selectbox("CT 프리셋", list(presets))
-        st.button("프리셋 적용", on_click=set_window, args=presets[preset])
     center = st.number_input("윈도우 중심 (밝기)", key="viewer_center", step=1.0)
     width = st.number_input("윈도우 폭 (대비)", min_value=1.0, key="viewer_width", step=1.0)
     tool = st.radio("마우스 도구", ["확대·이동", "길이 측정"], key="viewer_tool",
