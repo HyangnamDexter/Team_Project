@@ -1,3 +1,8 @@
+"""특화 기능: 영상 품질·DICOM 태그·시리즈 구성 자동 점검.
+담당: C(지표 계산, 기준값), B(태그 점검), A(시리즈 점검)
+
+점검 기준은 촬영 종류(modality)마다 다르다. CR·DX는 같은 X-ray 기준을 쓴다.
+"""
 from __future__ import annotations
 
 import cv2
@@ -33,7 +38,7 @@ def thresholds_for(modality: str) -> dict[str, float]:
     key = "DX" if modality == "CR" else modality
     if key not in QC_THRESHOLDS:
         raise ValueError(f"품질 기준이 없는 촬영 종류입니다: {modality}")
-    return QC_THRESHOLDS[key] # TODO(C)
+    return QC_THRESHOLDS[key] 
 
 
 def sample_slices(num_slices: int, k: int = 5) -> list[int]:
@@ -57,7 +62,7 @@ def sample_slices(num_slices: int, k: int = 5) -> list[int]:
         closest_idx = min(range(len(indices)), key=lambda i: abs(indices[i] - mid))
         indices[closest_idx] = mid
 
-    return sorted(indices) # TODO(C)
+    return sorted(indices) 
 
 
 def image_quality(img: np.ndarray, modality: str = "DX") -> dict:
@@ -89,7 +94,7 @@ def image_quality(img: np.ndarray, modality: str = "DX") -> dict:
         "contrast": round(contrast, 2),
         "sharpness": round(sharpness, 2),
         "issues": issues,
-    }   # TODO(C)
+    }   
 
 
 def tag_check(header: dict, modality: str = "DX") -> dict:
