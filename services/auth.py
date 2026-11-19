@@ -89,6 +89,6 @@ def require_login() -> dict:
     user = current_user()
     if not user:
         st.warning("로그인이 필요합니다.")
-        st.page_link("app.py", label="로그인 화면으로 이동", icon="🔐")
+        st.page_link("pages/0_Login.py", label="로그인 화면으로 이동", icon="🔐")
         st.stop()
     return user

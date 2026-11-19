@@ -45,7 +45,12 @@ pytest
 - 테스트 계정 비밀번호는 LMS 제출란에만 적는다.
 
 ## 데이터
-- X-ray: RSNA Pneumonia Detection Challenge (Kaggle)
+- X-ray: [VinDr-SpineXR v1.0.0](https://physionet.org/content/vindr-spinexr/1.0.0/) (PhysioNet) – 척추 X-ray 10,466장, 13개 소견 박스 라벨 (수술 임플란트 포함)
+  - 이용 조건: PhysioNet Restricted Health Data License 1.5.0
+  - **팀원 각자** PhysioNet 가입 + 데이터 사용 동의서(DUA) 서명 후 직접 다운로드, 받은 파일은 다른 사람에게 넘기지 않는다
+  - 배포한 웹앱에서는 로그인한 사용자만 영상을 볼 수 있게 한다
+  - 전체(33GB) 대신 일부만 받는다 → `scripts/download_spinexr.py` 맨 위 안내 참고 (`data/vindr-spinexr/`에 저장)
+  - 예비: RSNA Pneumonia Detection Challenge (Kaggle, 흉부 X-ray)
 - CT·MRI: TCIA 공개 컬렉션 (후보 선정 중)
 - 출처와 이용 조건은 확인 후 `docs/data.md`에 기록
 - 영상 파일은 저장소에 올리지 않는다 (`data/` 제외).
