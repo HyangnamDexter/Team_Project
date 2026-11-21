@@ -212,3 +212,52 @@ def test_cleanup_never_touches_existing_original(tmp_path):
 
 def test_cleanup_missing_root(tmp_path):
     assert cleanup_orphans(tmp_path / "nope", FakeDB()) == {"recovered": [], "removed": []}
+
+
+# ---------------------------------------------------------------- Modality 태그 없는 파일 (VinDr-SpineXR)
+@pytest.fixture
+def no_modality(monkeypatch):
+    """PR #15 의 load_dicom 처럼 Modality 가 없으면 modality="" + missing_tags 로 돌려주게 흉내 낸다."""
+    real = cases.load_dicom
+
+    def fake(file):
+        pixels, header = real(file)
+        return pixels, dict(header, modality="", missing_tags=["Modality"])
+    monkeypatch.setattr(cases, "load_dicom", fake)
+
+
+def register_with(db, tmp_path, modality):
+    return register_case(RADIOGRAPHER, dicom_bytes(), db=db, storage_root=tmp_path,
+                         modality=modality, now=NOW, ids=IDS)
+
+
+@pytest.mark.parametrize("chosen", ["DX", "CR", "dx"])
+def test_missing_modality_uses_user_choice(tmp_path, no_modality, chosen):
+    db = FakeDB()
+    result = register_with(db, tmp_path, chosen)
+    assert result["qc"]["modality"] == chosen.upper()
+    assert db.data["cases"][IDS[0]]["modality"] == chosen.upper()
+    image = db.data["images"][IDS[1]]
+    assert image["modality"] == chosen.upper() and image["modality_source"] == "user"
+    assert "Modality" in image["qc"]["missing_tags"]  # 파일에 태그가 없었다는 사실은 남긴다
+
+
+def test_missing_modality_without_choice_asks_user(tmp_path, no_modality):
+    db = FakeDB()
+    with pytest.raises(RegistrationError, match="DX 또는 CR을 선택"):
+        register_with(db, tmp_path, None)
+    assert db.data == {} and not any(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("chosen", ["CT", "MR", "abc"])
+def test_missing_modality_rejects_non_xray_choice(tmp_path, no_modality, chosen):
+    with pytest.raises(RegistrationError, match="DX 또는 CR만"):
+        register_with(FakeDB(), tmp_path, chosen)
+
+
+def test_file_modality_wins_over_choice(tmp_path):
+    db = FakeDB()
+    register_case(RADIOGRAPHER, dicom_bytes(Modality="CR"), db=db, storage_root=tmp_path,
+                  modality="DX", now=NOW, ids=IDS)
+    image = db.data["images"][IDS[1]]
+    assert image["modality"] == "CR" and image["modality_source"] == "file"

@@ -10,8 +10,10 @@
 화면(B)에서 쓰는 예:
     from services.cases import register_case, RegistrationError
     result = register_case(user, uploaded.getvalue(), db=get_db(),
-                           storage_root=Path(st.secrets["storage"]["image_dir"]))
+                           storage_root=Path(st.secrets["storage"]["image_dir"]),
+                           modality=selected)  # 파일에 Modality 태그가 없을 때 화면에서 고른 "DX" / "CR"
     # result = {"case_id", "image_id", "status", "qc"}
+    # 파일에 Modality 가 없는데 modality 를 안 넘기면 RegistrationError → 화면에서 DX/CR 선택을 보여 주면 된다
 """
 from __future__ import annotations
 
@@ -57,7 +59,7 @@ def run_checks(pixels, header: dict) -> dict:
         "brightness": quality["brightness"],
         "contrast": quality["contrast"],
         "sharpness": quality["sharpness"],
-        "missing_tags": tags["missing"],
+        "missing_tags": sorted(set(header.get("missing_tags", [])) | set(tags["missing"])),
         "phi_removed": [],  # TODO(B): 개인정보 태그 제거(FR-53) 연결
         "series": None,
         "issues": issues,
@@ -65,13 +67,15 @@ def run_checks(pixels, header: dict) -> dict:
     }
 
 
-def register_case(user: dict | None, data: bytes, *, db, storage_root: Path,
+def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, modality: str | None = None,
                   now: datetime | None = None, ids: tuple[str, str] | None = None) -> dict:
     """X-ray DICOM 1장으로 케이스를 등록한다 (T1: 점검 통과 → 접수, T2: 점검 실패 → 재촬영 요청).
 
     - user: 로그인 사용자. 방사선사만 등록할 수 있다 (PermissionDenied)
     - data: 업로드한 파일 내용 (bytes)
     - db: Firestore 클라이언트 (services.db.get_db()). 테스트에서는 가짜 DB
+    - modality: 파일에 Modality 태그가 없을 때만 쓰는 촬영 종류 ("DX" 또는 "CR", 화면에서 사용자가 선택).
+      파일에 태그가 있으면 파일 값을 쓴다. (VinDr-SpineXR 은 Modality 태그가 없다)
     - now, ids: 테스트용 (시각·ID 고정)
     반환: {"case_id", "image_id", "status", "qc"}
     잘못된 DICOM은 core.dicom_io.InvalidDicomError, X-ray가 아니거나 저장 실패는 RegistrationError
@@ -80,8 +84,7 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path,
     if not data:
         raise RegistrationError("빈 파일은 등록할 수 없습니다.")
     pixels, header = load_dicom(BytesIO(data))
-    if header["modality"] not in XRAY_MODALITIES:
-        raise RegistrationError(f"X-ray(CR·DX) 영상만 등록할 수 있습니다. (이 파일: {header['modality']})")
+    header = dict(header, **_resolve_modality(header.get("modality"), modality))
 
     qc = run_checks(pixels, header)
     status = QC_FAILED if qc["issues"] else RECEIVED
@@ -122,6 +125,7 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path,
         "slice_thickness": header.get("slice_thickness"),
         "window_center": header.get("window_center"),
         "window_width": header.get("window_width"),
+        "modality_source": header["modality_source"],  # "file": 파일 태그 / "user": 등록할 때 사용자가 선택
         "qc": qc,
         "is_current": True,
         "replaces_image_id": None,
@@ -150,6 +154,21 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path,
 
     tmp_dir.rename(final_dir)
     return {"case_id": case_id, "image_id": image_id, "status": status, "qc": qc}
+
+
+def _resolve_modality(from_file: str | None, chosen: str | None) -> dict:
+    """등록에 쓸 촬영 종류. 파일 태그가 있으면 그 값, 없으면 사용자가 고른 값."""
+    from_file = (from_file or "").strip()
+    if from_file:
+        if from_file not in XRAY_MODALITIES:
+            raise RegistrationError(f"X-ray(CR·DX) 영상만 등록할 수 있습니다. (이 파일: {from_file})")
+        return {"modality": from_file, "modality_source": "file"}
+    chosen = (chosen or "").strip().upper()
+    if not chosen:
+        raise RegistrationError("파일에 촬영 종류(Modality) 태그가 없습니다. DX 또는 CR을 선택하세요.")
+    if chosen not in XRAY_MODALITIES:
+        raise RegistrationError(f"촬영 종류는 DX 또는 CR만 선택할 수 있습니다. (선택: {chosen})")
+    return {"modality": chosen, "modality_source": "user"}
 
 
 def cleanup_orphans(storage_root: Path, db) -> dict:
