@@ -10,6 +10,7 @@ MODULES = [
     "core.workflow",
     "services.auth",
     "services.db",
+    "services.cases",
 ]
 
 
