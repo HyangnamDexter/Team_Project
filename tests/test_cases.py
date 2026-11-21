@@ -13,8 +13,12 @@ from services import cases
 from services.cases import RegistrationError, cleanup_orphans, register_case
 
 NOW = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
-IDS = ("CASE-20261119-aaaaaa", "IMG-20261119-bbbb")
+IDS = ("CASE-20261119-aaaaaaaa", "IMG-20261119-bbbbbbbb")
 RADIOGRAPHER = {"uid": "u-rad", "email": "rad@test.com", "role": "radiographer"}
+
+
+class AlreadyExists(Exception):
+    """Firestore create 가 이미 있는 문서에 쓸 때 내는 오류 흉내"""
 
 
 # ---------------------------------------------------------------- 가짜 Firestore
@@ -23,6 +27,8 @@ class FakeDoc:
         self.db, self.collection, self.id = db, collection, doc_id
 
     def get(self):
+        if self.db.fail_get:
+            raise TimeoutError("read timeout")
         data = self.db.data.get(self.collection, {}).get(self.id)
         return type("Snap", (), {"exists": data is not None, "to_dict": lambda s: data})()
 
@@ -32,18 +38,28 @@ class FakeBatch:
         self.db, self.ops = db, []
 
     def set(self, ref, doc):
-        self.ops.append((ref, doc))
+        self.ops.append(("set", ref, doc))
+
+    def create(self, ref, doc):
+        self.ops.append(("create", ref, doc))
 
     def commit(self):
-        if self.db.fail_commit:
+        if self.db.fail_commit == "before":  # 아무것도 기록하지 못하고 실패
             raise RuntimeError("network down")
-        for ref, doc in self.ops:  # 전부 한 번에 반영 (중간 실패 없음)
+        for kind, ref, _ in self.ops:  # create 는 이미 있으면 전체 실패 (batch 는 모두 반영되거나 하나도 안 됨)
+            if kind == "create" and ref.id in self.db.data.get(ref.collection, {}):
+                raise AlreadyExists(f"{ref.collection}/{ref.id}")
+        for _, ref, doc in self.ops:
             self.db.data.setdefault(ref.collection, {})[ref.id] = doc
+        self.db.commits += 1
+        if self.db.fail_commit == "after":  # 기록은 됐는데 응답이 유실됨 (타임아웃)
+            raise TimeoutError("deadline exceeded")
 
 
 class FakeDB:
-    def __init__(self, fail_commit=False):
-        self.data, self.fail_commit, self._auto = {}, fail_commit, 0
+    def __init__(self, fail_commit=None, fail_get=False):
+        # fail_commit: None | "before" | "after",  fail_get: 결과 확인용 읽기도 실패
+        self.data, self.fail_commit, self.fail_get, self._auto, self.commits = {}, fail_commit, fail_get, 0, 0
 
     def collection(self, name):
         db = self
@@ -138,15 +154,113 @@ def test_qc_fail_goes_to_retake_with_reason(tmp_path):
 
 def test_new_ids_format():
     case_id, image_id = cases.new_ids(NOW)
-    assert case_id.startswith("CASE-20261119-") and len(case_id) == len("CASE-20261119-") + 6
-    assert image_id.startswith("IMG-20261119-") and len(image_id) == len("IMG-20261119-") + 4
+    assert case_id.startswith("CASE-20261119-") and len(case_id) == len("CASE-20261119-") + 8
+    assert image_id.startswith("IMG-20261119-") and len(image_id) == len("IMG-20261119-") + 8
 
 
 # ---------------------------------------------------------------- 실패 처리
 def test_db_failure_removes_files(tmp_path):
     with pytest.raises(RegistrationError, match="DB 저장"):
-        register(FakeDB(fail_commit=True), tmp_path)
+        register(FakeDB(fail_commit="before"), tmp_path)
     assert not (tmp_path / IDS[0]).exists()  # 파일이 남지 않음
+
+
+# ---------------------------------------------------------------- 리뷰 회귀 1: ID 충돌 시 덮어쓰기 금지
+def other_case_db():
+    """다른 케이스가 이미 같은 image_id 를 쓰고 있는 DB"""
+    db = FakeDB()
+    db.data["images"] = {IDS[1]: {"case_id": "CASE-OTHER", "write_token": "other"}}
+    return db
+
+
+def test_image_id_conflict_never_overwrites_existing(tmp_path):
+    db = other_case_db()
+    with pytest.raises(RegistrationError, match="이미 사용 중"):
+        register(db, tmp_path)  # ids 를 고정했으므로 다시 시도하지 않고 실패
+    assert db.data["images"][IDS[1]] == {"case_id": "CASE-OTHER", "write_token": "other"}  # 그대로
+    assert IDS[0] not in db.data.get("cases", {}) and "case_history" not in db.data  # 우리 기록은 하나도 없음
+    assert not (tmp_path / IDS[0]).exists()  # 우리 임시 파일도 정리
+
+
+def test_case_id_conflict_never_overwrites_existing(tmp_path):
+    db = FakeDB()
+    db.data["cases"] = {IDS[0]: {"status": "완료", "write_token": "other"}}
+    with pytest.raises(RegistrationError, match="이미 사용 중"):
+        register(db, tmp_path)
+    assert db.data["cases"][IDS[0]] == {"status": "완료", "write_token": "other"}
+
+
+def test_conflict_retries_with_new_ids(tmp_path, monkeypatch):
+    db = other_case_db()
+    fresh = ("CASE-20261119-cccccccc", "IMG-20261119-dddddddd")
+    tries = iter([IDS, fresh])
+    monkeypatch.setattr(cases, "new_ids", lambda now: next(tries))
+    result = register_case(RADIOGRAPHER, dicom_bytes(), db=db, storage_root=tmp_path, now=NOW)
+    assert (result["case_id"], result["image_id"]) == fresh
+    assert db.data["images"][IDS[1]]["case_id"] == "CASE-OTHER"  # 기존 문서는 그대로
+    assert db.data["images"][fresh[1]]["case_id"] == fresh[0]
+    assert (tmp_path / fresh[0] / fresh[1] / "original" / "0001.dcm").exists()
+    assert not (tmp_path / IDS[0]).exists()
+
+
+def test_existing_folder_on_disk_is_not_deleted(tmp_path, monkeypatch):
+    # 디스크에 같은 ID 폴더(다른 케이스의 원본)가 있으면 지우지 않고 새 ID로 등록
+    other = tmp_path / IDS[0] / IDS[1] / "original"
+    other.mkdir(parents=True)
+    (other / "0001.dcm").write_bytes(b"other case")
+    fresh = ("CASE-20261119-eeeeeeee", "IMG-20261119-ffffffff")
+    tries = iter([IDS, fresh])
+    monkeypatch.setattr(cases, "new_ids", lambda now: next(tries))
+    result = register_case(RADIOGRAPHER, dicom_bytes(), db=FakeDB(), storage_root=tmp_path, now=NOW)
+    assert result["case_id"] == fresh[0]
+    assert (other / "0001.dcm").read_bytes() == b"other case"
+
+
+# ---------------------------------------------------------------- 리뷰 회귀 2: 응답 유실 시 원본 보존
+def test_lost_response_after_db_write_keeps_file_and_succeeds(tmp_path):
+    db = FakeDB(fail_commit="after")  # DB에는 기록됐지만 commit 이 타임아웃
+    result = register(db, tmp_path)
+    assert result["case_id"] == IDS[0] and db.commits == 1
+    assert (tmp_path / IDS[0] / IDS[1] / "original" / "0001.dcm").exists()  # 원본이 남아 있음
+    assert db.data["images"][IDS[1]]["case_id"] == IDS[0]
+
+
+def test_unknown_result_keeps_tmp_and_cleanup_recovers(tmp_path):
+    db = FakeDB(fail_commit="after", fail_get=True)  # 기록 후 응답 유실 + 확인용 읽기도 실패
+    with pytest.raises(RegistrationError, match="확인하지 못했습니다"):
+        register(db, tmp_path)
+    tmp = tmp_path / IDS[0] / IDS[1] / "original.tmp" / "0001.dcm"
+    assert tmp.exists()  # 결과가 불확실하면 파일을 지우지 않는다
+
+    db.fail_get = False  # 네트워크 복구 후 앱 재시작
+    assert cleanup_orphans(tmp_path, db) == {"recovered": [IDS[1]], "removed": []}
+    assert (tmp_path / IDS[0] / IDS[1] / "original" / "0001.dcm").exists()
+
+
+def test_unknown_result_without_db_write_is_removed_later(tmp_path):
+    db = FakeDB(fail_commit="before", fail_get=True)  # 실제로는 기록 안 됨 + 확인도 실패
+    with pytest.raises(RegistrationError, match="확인하지 못했습니다"):
+        register(db, tmp_path)
+    db.fail_get = False
+    assert cleanup_orphans(tmp_path, db) == {"recovered": [], "removed": [IDS[1]]}
+    assert not (tmp_path / IDS[0]).exists()
+
+
+def test_cleanup_skips_when_db_unreachable(tmp_path):
+    tmp = tmp_path / "CASE-u" / "IMG-u" / "original.tmp"
+    tmp.mkdir(parents=True)
+    assert cleanup_orphans(tmp_path, FakeDB(fail_get=True)) == {"recovered": [], "removed": []}
+    assert tmp.exists()
+
+
+def test_cleanup_does_not_recover_into_other_cases_doc(tmp_path):
+    # 같은 image_id 문서가 DB에 있지만 다른 케이스 것 → 우리 임시 폴더는 복구하지 않고 지운다
+    db = FakeDB()
+    db.data["images"] = {"IMG-x": {"case_id": "CASE-OTHER"}}
+    tmp = tmp_path / "CASE-mine" / "IMG-x" / "original.tmp"
+    tmp.mkdir(parents=True)
+    assert cleanup_orphans(tmp_path, db) == {"recovered": [], "removed": ["IMG-x"]}
+    assert not (tmp_path / "CASE-mine").exists()
 
 
 @pytest.mark.parametrize("user", [None, {"uid": "x", "role": "reader"}, {"uid": "x", "role": "manager"}])

@@ -3,9 +3,14 @@
 저장 순서 (파일 먼저, DB 나중 — NFR-04)
 1. 원본을 임시 폴더 <저장소>/<case_id>/<image_id>/original.tmp/0001.dcm 에 쓴다
 2. Firestore 에 cases·images·case_history 문서를 한 번에(batch) 기록한다
+   cases·images 는 create 로 쓴다 → 같은 ID 문서가 이미 있으면 덮어쓰지 않고 실패한다
 3. 성공하면 임시 폴더 이름을 original/ 로 바꾼다
-4. DB 기록이 실패하면 임시 폴더를 지우고 RegistrationError 를 낸다
-→ "DB에는 있는데 파일이 없는" 상황이 생기지 않는다. 남은 .tmp 는 앱 시작 때 cleanup_orphans 로 정리한다.
+4. DB 기록에서 예외가 나면 DB를 다시 읽어 결과를 확인한다
+   - 우리 기록이 있음(응답만 유실): 성공으로 처리
+   - 기록 없음: 임시 폴더를 지우고 RegistrationError
+   - 다른 등록이 같은 ID를 이미 씀: 우리 임시 폴더만 지우고 새 ID로 다시 시도
+   - 확인도 실패(결과 불확실): 임시 폴더를 남기고 RegistrationError → 앱 시작 때 cleanup_orphans 가 DB를 보고 복구·삭제
+→ "DB에는 있는데 파일이 없는" 상황이 생기지 않는다.
 
 화면(B)에서 쓰는 예:
     from services.cases import register_case, RegistrationError
@@ -35,10 +40,14 @@ class RegistrationError(Exception):
     """등록 실패. 메시지는 화면에 그대로 보여 줄 수 있는 문장이다."""
 
 
+ID_HEX = 8         # 날짜 + 무작위 16진수 8자리(32비트). 겹쳐도 create 로 막고 다시 시도한다
+MAX_ATTEMPTS = 3   # ID가 겹쳤을 때 새 ID로 다시 시도하는 최대 횟수
+
+
 def new_ids(now: datetime) -> tuple[str, str]:
-    """(case_id, image_id). 예: CASE-20261119-3fa9c2, IMG-20261119-7b1e"""
+    """(case_id, image_id). 예: CASE-20261121-3fa9c2d1, IMG-20261121-7b1e04aa"""
     day = now.strftime("%Y%m%d")
-    return f"CASE-{day}-{secrets.token_hex(3)}", f"IMG-{day}-{secrets.token_hex(2)}"
+    return f"CASE-{day}-{secrets.token_hex(ID_HEX // 2)}", f"IMG-{day}-{secrets.token_hex(ID_HEX // 2)}"
 
 
 def run_checks(pixels, header: dict) -> dict:
@@ -89,17 +98,33 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, mod
     qc = run_checks(pixels, header)
     status = QC_FAILED if qc["issues"] else RECEIVED
     now = now or datetime.now(timezone.utc)
-    case_id, image_id = ids or new_ids(now)
+    root = Path(storage_root)
 
-    image_dir = Path(storage_root) / case_id / image_id
+    for _ in range(1 if ids else MAX_ATTEMPTS):
+        case_id, image_id = ids or new_ids(now)
+        if _save_once(db, root, data, header, qc, status, user, now, case_id, image_id) == "ok":
+            return {"case_id": case_id, "image_id": image_id, "status": status, "qc": qc}
+        # "conflict": 다른 등록이 같은 ID를 이미 씀 → 새 ID로 다시 시도
+    raise RegistrationError("등록 번호가 이미 사용 중입니다. 다시 시도하세요.")
+
+
+def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, status: str, user: dict,
+               now: datetime, case_id: str, image_id: str) -> str:
+    """파일 → DB 저장을 한 번 시도한다. "ok" 또는 "conflict" 를 돌려주고, 그 밖의 실패는 RegistrationError."""
+    image_dir = root / case_id / image_id
     tmp_dir, final_dir = image_dir / "original.tmp", image_dir / "original"
+    if image_dir.exists():  # 디스크에 같은 ID 폴더가 있음 → 남의 폴더이므로 건드리지 않고 새 ID로
+        return "conflict"
     try:
-        tmp_dir.mkdir(parents=True, exist_ok=False)
+        tmp_dir.mkdir(parents=True)
         (tmp_dir / SLICE_FILE).write_bytes(data)
+    except FileExistsError:  # 동시에 같은 ID 폴더를 만든 경우
+        return "conflict"
     except OSError as exc:
-        _remove_case_dir(Path(storage_root), case_id)
+        _remove_image_dir(root, case_id, image_id)
         raise RegistrationError("영상 파일을 저장하지 못했습니다. 저장 공간을 확인하세요.") from exc
 
+    write_token = secrets.token_hex(16)  # 이 등록이 쓴 문서인지 나중에 확인하는 표시
     case_doc = {
         "status": status,
         "modality": header["modality"],
@@ -110,6 +135,7 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, mod
         "created_at": now,
         "updated_at": now,
         "is_mock": True,
+        "write_token": write_token,
     }
     image_doc = {
         "case_id": case_id,
@@ -131,6 +157,7 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, mod
         "replaces_image_id": None,
         "uploaded_by": user["uid"],
         "uploaded_at": now,
+        "write_token": write_token,
     }
     history_doc = {
         "case_id": case_id,
@@ -144,16 +171,41 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, mod
 
     try:
         batch = db.batch()
-        batch.set(db.collection("cases").document(case_id), case_doc)
-        batch.set(db.collection("images").document(image_id), image_doc)
-        batch.set(db.collection("case_history").document(), history_doc)
+        batch.create(db.collection("cases").document(case_id), case_doc)    # 이미 있으면 실패 (덮어쓰기 방지)
+        batch.create(db.collection("images").document(image_id), image_doc)
+        batch.set(db.collection("case_history").document(), history_doc)   # 자동 ID라 겹치지 않음
         batch.commit()
     except Exception as exc:
-        _remove_case_dir(Path(storage_root), case_id)
-        raise RegistrationError("DB 저장에 실패해 등록을 취소했습니다. 잠시 후 다시 시도하세요.") from exc
+        result = _check_written(db, case_id, image_id, write_token)
+        if result == "unknown":  # 결과를 알 수 없음 → 파일을 남겨 두고 앱 시작 때 DB를 보고 정리
+            raise RegistrationError(
+                f"저장 결과를 확인하지 못했습니다. 잠시 후 케이스 목록에서 {case_id} 를 확인하세요."
+            ) from exc
+        if result != "ours":  # 기록 안 됨 또는 남의 기록 → 우리 파일만 지운다
+            _remove_image_dir(root, case_id, image_id)
+            if result == "conflict":
+                return "conflict"
+            raise RegistrationError("DB 저장에 실패해 등록을 취소했습니다. 잠시 후 다시 시도하세요.") from exc
+        # "ours": DB에는 저장됐고 응답만 유실 → 성공으로 이어서 처리
 
     tmp_dir.rename(final_dir)
-    return {"case_id": case_id, "image_id": image_id, "status": status, "qc": qc}
+    return "ok"
+
+
+def _check_written(db, case_id: str, image_id: str, write_token: str) -> str:
+    """DB 기록 예외 뒤 실제 결과 확인. "ours" | "absent" | "conflict" | "unknown" """
+    try:
+        snaps = [db.collection(c).document(i).get() for c, i in (("cases", case_id), ("images", image_id))]
+    except Exception:
+        return "unknown"
+    docs = [snap.to_dict() or {} for snap in snaps if snap.exists]
+    if not docs:
+        return "absent"
+    if any(d.get("write_token") != write_token for d in docs):
+        return "conflict"
+    if len(docs) == 2:
+        return "ours"
+    return "unknown"  # 한쪽만 우리 기록 (batch 는 한꺼번에 반영되므로 정상이라면 생기지 않음)
 
 
 def _resolve_modality(from_file: str | None, chosen: str | None) -> dict:
@@ -174,8 +226,9 @@ def _resolve_modality(from_file: str | None, chosen: str | None) -> dict:
 def cleanup_orphans(storage_root: Path, db) -> dict:
     """앱 시작 때 남은 임시 폴더(original.tmp)를 정리한다.
 
-    - DB에 images 문서가 있으면: DB 기록 후 이름 바꾸기 직전에 멈춘 것 → original/ 로 마저 바꾼다
-    - DB에 없으면: DB 기록 전에 멈춘 것 → 지운다
+    - DB에 이 폴더의 images 문서가 있으면(같은 case_id): DB 기록 후 멈춘 것 → original/ 로 마저 바꾼다
+    - DB에 없거나 다른 케이스의 문서면: DB 기록 전에 멈춘 것 → 지운다
+    - DB를 읽지 못하면: 그 폴더는 건드리지 않는다 (다음 시작 때 다시 확인)
     반환: {"recovered": [image_id...], "removed": [image_id...]}
     """
     recovered, removed = [], []
@@ -185,7 +238,11 @@ def cleanup_orphans(storage_root: Path, db) -> dict:
     for tmp_dir in sorted(root.glob("*/*/original.tmp")):
         image_dir = tmp_dir.parent
         image_id, case_id = image_dir.name, image_dir.parent.name
-        if db.collection("images").document(image_id).get().exists:
+        try:
+            snap = db.collection("images").document(image_id).get()
+        except Exception:
+            continue
+        if snap.exists and (snap.to_dict() or {}).get("case_id") == case_id:
             final_dir = image_dir / "original"
             if final_dir.exists():  # 원본은 이미 있음 → 임시 폴더만 지운다 (원본은 절대 건드리지 않음)
                 shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -194,13 +251,17 @@ def cleanup_orphans(storage_root: Path, db) -> dict:
                 tmp_dir.rename(final_dir)
                 recovered.append(image_id)
             continue
-        shutil.rmtree(image_dir, ignore_errors=True)
+        if (image_dir / "original").exists():  # 원본이 있는 폴더는 지우지 않고 임시 폴더만
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        else:
+            _remove_image_dir(root, case_id, image_id)
         removed.append(image_id)
-        case_dir = root / case_id
-        if case_dir.exists() and not any(case_dir.iterdir()):
-            case_dir.rmdir()
     return {"recovered": recovered, "removed": removed}
 
 
-def _remove_case_dir(root: Path, case_id: str) -> None:
-    shutil.rmtree(root / case_id, ignore_errors=True)
+def _remove_image_dir(root: Path, case_id: str, image_id: str) -> None:
+    """이 등록이 만든 영상 폴더만 지운다. 케이스 폴더는 비었을 때만 지운다 (다른 영상 보호)."""
+    shutil.rmtree(root / case_id / image_id, ignore_errors=True)
+    case_dir = root / case_id
+    if case_dir.exists() and not any(case_dir.iterdir()):
+        case_dir.rmdir()
