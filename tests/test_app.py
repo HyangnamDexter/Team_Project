@@ -9,7 +9,8 @@ USER = {"uid": "uid-001", "email": "user001@test.com", "role": "manager", "id_to
 
 
 def run(user=None, page=None):
-    at = AppTest.from_file(APP)
+    # WSL 파일 로딩과 최초 Streamlit import 시간을 허용한다.
+    at = AppTest.from_file(APP, default_timeout=30)
     if user is not None:
         at.session_state["user"] = user
     if page:

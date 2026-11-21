@@ -184,3 +184,32 @@ def test_bad_window(center, width):
 def test_bad_percentiles(low, high):
     with pytest.raises(ValueError):
         auto_window(np.ones((2, 2)), low, high)
+
+
+@pytest.mark.parametrize('value', [None, '', '   '])
+def test_empty_modality_can_be_read(dicom_file, value):
+    pixels, header = load_dicom(dicom_file(Modality=value))
+    assert header['modality'] == ''
+    assert header['missing_tags'] == ['Modality']
+    assert 'Modality' not in header['present_tags']
+    assert apply_window(pixels).dtype == np.uint8
+
+
+def test_missing_modality_can_be_read_without_changing_source(dicom_file):
+    ds = pydicom.dcmread(dicom_file())
+    del ds.Modality
+    stream = BytesIO()
+    ds.save_as(stream, enforce_file_format=True)
+    original = stream.getvalue()
+    pixels, header = load_dicom(stream)
+    assert header['modality'] == ''
+    assert header['missing_tags'] == ['Modality']
+    assert 'Modality' not in header['present_tags']
+    np.testing.assert_array_equal(pixels, [[0, 100], [200, 300]])
+    assert stream.getvalue() == original
+
+
+def test_supported_modality_has_no_missing_tag(dicom_file):
+    _, header = load_dicom(dicom_file())
+    assert header['modality'] == 'DX'
+    assert header['missing_tags'] == []
