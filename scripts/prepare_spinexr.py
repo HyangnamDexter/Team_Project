@@ -169,6 +169,7 @@ def dicom_to_png(dicom_path: Path, png_path: Path, max_size: int | None = None) 
 
 
 def write_dataset_yaml(out_dir: Path) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)  # 변환된 영상이 0장이어도 폴더가 있어야 저장된다
     path = out_dir / "dataset.yaml"
     names = "\n".join(f"  {i}: {n}" for i, n in enumerate(CLASS_NAMES))
     path.write_text(
