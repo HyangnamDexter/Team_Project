@@ -141,6 +141,7 @@ def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, status: str,
         "case_id": case_id,
         "modality": header["modality"],
         "series_uid": header.get("series_uid", ""),
+        "sop_instance_uid": _sop_instance_uid(data),  # 영상 고유 번호. VinDr 정답(ground_truth)과 연결하는 키
         "original_dir": f"{case_id}/{image_id}/original",  # 저장소(storage.image_dir) 기준 상대 경로
         "num_slices": 1,
         "slice_files": [SLICE_FILE],
@@ -206,6 +207,17 @@ def _check_written(db, case_id: str, image_id: str, write_token: str) -> str:
     if len(docs) == 2:
         return "ours"
     return "unknown"  # 한쪽만 우리 기록 (batch 는 한꺼번에 반영되므로 정상이라면 생기지 않음)
+
+
+def _sop_instance_uid(data: bytes) -> str | None:
+    """파일의 SOPInstanceUID (영상 고유 번호). 없거나 읽지 못하면 None (등록은 그대로 진행)."""
+    import pydicom
+
+    try:
+        ds = pydicom.dcmread(BytesIO(data), stop_before_pixels=True, specific_tags=["SOPInstanceUID"])
+    except Exception:
+        return None
+    return str(getattr(ds, "SOPInstanceUID", "") or "").strip() or None
 
 
 def _resolve_modality(from_file: str | None, chosen: str | None) -> dict:
