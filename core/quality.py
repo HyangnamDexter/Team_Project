@@ -118,3 +118,97 @@ def series_check(headers: list[dict], positions: list[float] | None, min_slices:
              "gaps": [{"after_index": 89, "position_mm": -6.25}], "issues": ["단면 누락 (위치 -6.25mm 부근)"]}
     """
     raise NotImplementedError  # TODO(A)
+
+def detect_foreign_objects(
+    pixels: np.ndarray,
+    percentile: float = 99.5,
+    min_area: int = 30,
+    max_area_ratio: float = 0.02,
+) -> dict:
+    """척추 X-ray 원시 픽셀 2D 배열에서 고밀도 이물질(금속) 의심 영역을 검출한다."""
+    if not isinstance(pixels, np.ndarray) or pixels.ndim != 2 or pixels.size == 0:
+        raise ValueError("pixels must be a non-empty 2D numpy array")
+    if not np.issubdtype(pixels.dtype, np.number):
+        raise ValueError("pixels must have a numeric dtype")
+
+    if isinstance(percentile, bool) or not isinstance(percentile, (int, float, np.number)):
+        raise ValueError("percentile must be a number between 0 and 100")
+    percentile_val = float(percentile)
+    if not np.isfinite(percentile_val) or not (0.0 <= percentile_val <= 100.0):
+        raise ValueError("percentile must be between 0 and 100")
+
+    if isinstance(min_area, bool) or not isinstance(min_area, (int, np.integer)) or int(min_area) < 0:
+        raise ValueError("min_area must be a non-negative integer")
+    min_area_val = int(min_area)
+
+    if isinstance(max_area_ratio, bool) or not isinstance(max_area_ratio, (int, float, np.number)):
+        raise ValueError("max_area_ratio must be a number in (0, 1]")
+    max_area_ratio_val = float(max_area_ratio)
+    if not np.isfinite(max_area_ratio_val) or not (0.0 < max_area_ratio_val <= 1.0):
+        raise ValueError("max_area_ratio must be in (0, 1]")
+
+    work = np.array(pixels, copy=True)
+
+    thresh = float(np.percentile(work, percentile_val))
+    mask_threshold = np.where(work >= thresh, 255, 0).astype(np.uint8)
+
+    kernel_open = np.ones((3, 3), dtype=np.uint8)
+    opened = cv2.morphologyEx(mask_threshold, cv2.MORPH_OPEN, kernel_open)
+
+    kernel_close = np.ones((5, 5), dtype=np.uint8)
+    mask_cleaned = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel_close)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_cleaned)
+
+    total_pixels = work.shape[0] * work.shape[1]
+    max_area = total_pixels * max_area_ratio_val
+
+    objects = []
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < min_area_val or area > max_area:
+            continue
+
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        w = int(stats[label, cv2.CC_STAT_WIDTH])
+        h = int(stats[label, cv2.CC_STAT_HEIGHT])
+        mean_val = float(work[labels == label].mean())
+
+        comp_mask = np.where(labels == label, 255, 0).astype(np.uint8)
+        contours, _ = cv2.findContours(comp_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        shape = "other"
+        if contours:
+            cnt = max(contours, key=cv2.contourArea)
+            (_, _), (rw, rh), _ = cv2.minAreaRect(cnt)
+            long_side = max(rw, rh)
+            short_side = min(rw, rh)
+            perimeter = float(cv2.arcLength(cnt, True))
+
+            if (short_side == 0.0 and long_side > 0.0) or (
+                short_side > 0.0 and (long_side / short_side) >= 3.0
+            ):
+                shape = "long"
+            elif perimeter > 0.0 and (4.0 * np.pi * area / (perimeter ** 2)) >= 0.7:
+                shape = "round"
+
+        objects.append(
+            {
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h,
+                "area": area,
+                "mean": mean_val,
+                "shape": shape,
+            }
+        )
+
+    return {
+        "objects": objects,
+        "steps": {
+            "threshold": mask_threshold,
+            "cleaned": mask_cleaned,
+        },
+    }
