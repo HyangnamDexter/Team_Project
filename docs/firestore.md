@@ -177,7 +177,7 @@ X-ray는 `sampled_slices`가 `[0]`, `series`가 null이다.
 | case_id | string | |
 | from_status / to_status | string | 등록 시 from은 null |
 | reason | string \| null | T7, T9는 필수 |
-| extra | map | 배정 변경이면 `{"from_uid", "to_uid"}` |
+| extra | map \| null | 배정 변경이면 `{"from_uid", "to_uid"}`, 검토 완료면 `{"report_id"}`, 등록이면 `{"image_id"}` |
 | actor_uid / at | string / timestamp | |
 
 ## 4. 파일 저장 구조와 일관성
