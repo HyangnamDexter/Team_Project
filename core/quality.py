@@ -15,7 +15,7 @@ QC_THRESHOLDS: dict[str, dict[str, float]] = {
         "brightness_min": 35.0,
         "brightness_max": 220.0,
         "contrast_min": 25.0,
-        "sharpness_min": 50.0,
+        "sharpness_min": 30.0,
     },
     "CT": {
         "brightness_min": 25.0,
@@ -30,7 +30,7 @@ QC_THRESHOLDS: dict[str, dict[str, float]] = {
         "sharpness_min": 40.0,
     },
 }
-QC_THRESHOLDS_VERSION = "v1"
+QC_THRESHOLDS_VERSION = "v2"
 
 
 def thresholds_for(modality: str) -> dict[str, float]:

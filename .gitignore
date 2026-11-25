@@ -18,6 +18,10 @@ data/sample/*
 !data/sample/.gitkeep
 storage/
 
+# 모델 가중치 (용량·파생 모델 정책으로 저장소 제외)
+*.pt
+*.onnx
+
 # OS / IDE
 .DS_Store
 Thumbs.db

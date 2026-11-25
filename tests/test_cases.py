@@ -8,6 +8,7 @@ from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
 
 from core.dicom_io import InvalidDicomError
+from core.quality import QC_THRESHOLDS_VERSION
 from core.workflow import PermissionDenied
 from services import cases
 from services.cases import RegistrationError, cleanup_orphans, register_case
@@ -128,7 +129,7 @@ def test_register_saves_file_then_db(tmp_path):
     assert image["case_id"] == case_id
     assert image["original_dir"] == f"{case_id}/{image_id}/original"
     assert image["slice_files"] == ["0001.dcm"] and image["num_slices"] == 1
-    assert image["qc"]["thresholds_version"] == "v1" and image["qc"]["series"] is None
+    assert image["qc"]["thresholds_version"] == QC_THRESHOLDS_VERSION and image["qc"]["series"] is None
     history = list(db.data["case_history"].values())
     assert len(history) == 1
     assert history[0]["from_status"] is None and history[0]["to_status"] == case["status"]
