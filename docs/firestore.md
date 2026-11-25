@@ -22,6 +22,7 @@ erDiagram
     CASES ||--o{ NOTES : "메모"
     CASES ||--o{ CASE_HISTORY : "상태 이력"
     IMAGES }o--o| GROUND_TRUTH : "정답 (sop_instance_uid)"
+    IMAGES ||--o| DETECTIONS : "자동 탐지 (같은 ID)"
 
     USERS {
         string uid PK "Auth UID = 문서 ID"
@@ -75,6 +76,12 @@ erDiagram
         array edits "수정 이력"
         string author_uid FK
         timestamp created_at
+    }
+    DETECTIONS {
+        string image_id PK "images 와 같은 ID"
+        string status "done | no_model | failed"
+        array boxes "원본 픽셀 좌표 + score"
+        string model
     }
     GROUND_TRUTH {
         string id PK "VinDr image_id = SOPInstanceUID"
@@ -166,6 +173,23 @@ VinDr-SpineXR 라벨 CSV의 임플란트 정답 박스. `scripts/import_ground_t
 | class_name | string | `implant` | 탐지 모델의 클래스 이름과 같다 |
 | boxes | array of map | `[{"xmin": 812.0, "ymin": 1450.5, "xmax": 1020.0, "ymax": 1903.0}]` | 원본 영상 픽셀 좌표. 정상 영상은 빈 목록 |
 | n_boxes | int | `2` | |
+
+### `detections/{image_id}`
+등록할 때 임플란트 탐지 모델(`core/detector.py`, ONNX)이 찾은 박스. 문서 ID는 `images`와 같다.
+케이스·영상 문서와 **같은 batch**로 저장해서, 케이스 없이 탐지 결과만 남는 일이 없다.
+모델이 없거나 탐지가 실패해도 등록은 진행하고 `status`로 구분한다. 읽기는 `services/detection.get_detections` (판독의는 본인 배정 건만).
+
+| 필드 | 타입 | 예시 | 설명 |
+|---|---|---|---|
+| image_id / case_id | string | `IMG-...` / `CASE-...` | |
+| status | string | `done` | `done`(박스 0개 포함) / `no_model`(모델 파일 없음) / `failed`(탐지 중 오류) |
+| boxes | array of map | `[{"xmin": 812.0, "ymin": 1450.5, "xmax": 1020.0, "ymax": 1903.0, "score": 0.87, "class_name": "implant"}]` | 원본 영상 픽셀 좌표, 점수 높은 순. `ground_truth.boxes`와 같은 기준 |
+| n_boxes | int | `2` | |
+| model | string \| null | `implant.onnx` | 모델 파일 이름 |
+| conf | number \| null | `0.3` | 이 점수 이상만 저장 |
+| elapsed_ms | number \| null | `412.3` | 전처리 + 모델 실행 시간 |
+| error | string \| null | | `failed`일 때 화면용 메시지 |
+| run_at | timestamp | | |
 
 ### `processing_logs/{log_id}`
 | 필드 | 타입 | 예시 |

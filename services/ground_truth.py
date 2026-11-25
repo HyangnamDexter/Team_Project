@@ -16,7 +16,7 @@
 """
 from __future__ import annotations
 
-from core.workflow import READER, PermissionDenied, require_role
+from services.access import ImageNotFound, visible_image
 
 COLLECTION = "ground_truth"
 SOURCE = "VinDr-SpineXR 1.0.0"
@@ -74,15 +74,10 @@ def get_ground_truth(user: dict | None, image_id: str, *, db) -> dict | None:
     권한: 로그인 필수. 판독의는 본인에게 배정된 케이스의 영상만 (workflow.md 3장 '영상 보기').
     반환: ground_truth 문서 + {"id": VinDr image_id}
     """
-    require_role(user)
-    image_snap = db.collection("images").document(image_id).get()
-    if not image_snap.exists:
-        raise GroundTruthError("영상을 찾을 수 없습니다.")
-    image = image_snap.to_dict() or {}
-    if user["role"] == READER:
-        case_snap = db.collection("cases").document(image.get("case_id") or "-").get()
-        if not case_snap.exists or (case_snap.to_dict() or {}).get("assignee_uid") != user["uid"]:
-            raise PermissionDenied("본인에게 배정된 케이스가 아닙니다.")
+    try:
+        image = visible_image(user, image_id, db=db)  # 로그인·담당자 확인 (services/access.py)
+    except ImageNotFound as exc:
+        raise GroundTruthError(str(exc)) from exc
     sop_uid = image.get("sop_instance_uid")
     if not sop_uid:
         return None  # VinDr 가 아니거나 SOPInstanceUID 가 없는 파일
