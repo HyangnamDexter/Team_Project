@@ -5,5 +5,6 @@ pydicom>=3.0
 firebase-admin>=6.5
 requests>=2.32
 pytest>=8.0
+onnxruntime>=1.18  # 임플란트 탐지 모델 실행 (PyTorch 없이 CPU에서 ONNX 모델 추론)
 # 압축된 DICOM(JPEG 등)을 읽어야 하면 주석 해제
 # pylibjpeg[all]
