@@ -1,3 +1,4 @@
 [server]
-# CT·MRI 시리즈 업로드를 위해 한도를 500MB로 올린다 (기본 200MB)
-maxUploadSize = 500
+# X-ray 1장은 약 5MB. 업로드 파일은 메모리에 올라가므로 서버(JCloud micro, 메모리 2GB)를 지키려고 50MB로 제한한다
+# (CT·MRI 시리즈를 다룰 때는 500MB였다)
+maxUploadSize = 50
