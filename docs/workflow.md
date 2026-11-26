@@ -69,6 +69,9 @@ stateDiagram-v2
 ## 4. 권한 검사 위치
 
 화면에서 버튼을 숨기는 것과 별도로, **데이터를 바꾸는 서비스 함수 맨 앞에서** 검사한다.
+실제 구현: T4~T9는 `services/review.py`, T1·T2는 `services/cases.py`의 `register_case`.
+상태 확인과 저장은 Firestore 트랜잭션 안에서 함께 해서, 같은 요청이 두 번 와도 두 번째는 거절된다.
+`tests/test_review.py`는 `user`를 받는 서비스 함수마다 권한 검사 테스트가 있는지 확인한다 (새 함수를 만들면 테스트도 추가).
 
 ```python
 # 예시: 검토 완료 처리

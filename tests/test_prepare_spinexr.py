@@ -158,3 +158,11 @@ def test_convert_writes_png_labels_and_yaml(tmp_path):
     assert (out / "labels" / "val" / "b.txt").read_text() == ""  # 정상 영상은 빈 라벨
     yaml = (out / "dataset.yaml").read_text(encoding="utf-8")
     assert "train: images/train" in yaml and "0: implant" in yaml
+
+
+def test_convert_with_nothing_downloaded(tmp_path):
+    # 받은 영상이 하나도 없으면 출력 폴더가 없어도 멈추지 않고 0장으로 끝난다
+    out = tmp_path / "new" / "yolo"
+    result = convert([{"image_id": "x", "split": "train"}], {}, tmp_path / "vindr", out)
+    assert result == {"converted": {"train": 0, "val": 0, "test": 0}, "missing": 1, "failed": []}
+    assert (out / "dataset.yaml").exists()
