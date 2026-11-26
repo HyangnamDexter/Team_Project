@@ -13,7 +13,7 @@
 
 후처리
 - 모델 출력 (1, 4 + 클래스 수, 후보 수): 후보마다 cx, cy, w, h (640 칸 기준) + 클래스 점수
-- 점수 conf 이상만 남기고 NMS(IoU 0.7, ultralytics 기본값)로 겹친 박스 정리
+- 점수 conf 이상만 남기고 NMS(IoU 0.45, 전달받은 ONNX 명세)로 겹친 박스 정리
 - letterbox·축소를 되돌려 원본 영상 픽셀 좌표로 바꾼다 (ground_truth 박스와 같은 기준)
 
 사용 예:
@@ -33,8 +33,8 @@ import numpy as np
 
 from core.dicom_io import apply_window
 
-DEFAULT_CONF = 0.30       # C 실험(test 122장)에서 F1 이 가장 높았던 값
-DEFAULT_IOU = 0.70        # ultralytics 예측 기본 NMS 기준
+DEFAULT_CONF = 0.40       # C의 val 기준 선정값
+DEFAULT_IOU = 0.45        # 전달받은 ONNX 후처리 명세
 TRAIN_MAX_SIZE = 1024     # 학습 PNG 의 긴 변 (prepare_spinexr convert --max-size 기본값)
 DEFAULT_IMGSZ = 640       # 모델 입력 크기를 모델에서 읽지 못할 때만 쓴다
 PAD_VALUE = 114           # ultralytics letterbox 의 회색 채움 값

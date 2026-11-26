@@ -68,7 +68,7 @@ def test_boxes_mapped_back_to_original_pixels():
     b = result["boxes"][0]
     assert b["class_name"] == "implant" and b["score"] == pytest.approx(0.9)
     assert [b["xmin"], b["ymin"], b["xmax"], b["ymax"]] == pytest.approx(list(implant), abs=1.0)
-    assert result["conf"] == 0.30 and result["elapsed_ms"] >= 0
+    assert result["conf"] == 0.40 and result["elapsed_ms"] >= 0  # C 의 val 기준 확정값
 
 
 def test_low_score_removed_and_overlaps_merged_by_nms():
