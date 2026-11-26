@@ -18,7 +18,7 @@ data/sample/*
 !data/sample/.gitkeep
 storage/
 
-# 모델 가중치 (용량·파생 모델 정책으로 저장소 제외)
+# 학습 모델 가중치·변환 모델 (공개 저장소 업로드 금지)
 *.pt
 *.onnx
 
