@@ -44,10 +44,10 @@ def process_registration(user: dict) -> None:
         completed[pending["token"]] = result
         st.session_state.cases_completed = completed
     except (cases.RegistrationError, InvalidDicomError, PermissionDenied) as exc:
-        st.session_state.cases_registration_error = (user["uid"], str(exc))
+        st.session_state.cases_registration_error = (pending["token"], str(exc))
     except Exception:
         st.session_state.cases_registration_error = (
-            user["uid"], "등록 결과를 확인하지 못했습니다. 목록을 새로고침해 확인한 뒤 다시 시도하세요."
+            pending["token"], "등록 결과를 확인하지 못했습니다. 목록을 새로고침해 확인한 뒤 다시 시도하세요."
         )
     finally:
         st.session_state.pop("cases_pending", None)
@@ -96,6 +96,6 @@ def render_registration(user: dict) -> None:
                 st.success(f"{result['case_id']} 등록됨 ({result['status']})")
             st.caption("이미 등록한 파일입니다. 다른 영상을 선택하면 새로 등록할 수 있습니다.")
         error = st.session_state.get("cases_registration_error")
-        if error and error[0] == user["uid"]:
+        if error and error[0] == token:
             st.error(error[1])
         process_registration(user)

@@ -180,3 +180,36 @@ def test_late_duplicate_callback_is_ignored(monkeypatch):
     monkeypatch.setattr(st, "session_state", state)
     queue_registration(data, "DX")
     assert "cases_pending" not in state
+
+
+def test_previous_file_error_hidden_for_new_or_completed_file(page, monkeypatch):
+    app, selected, _ = page
+    completed_file, failed_file, new_file = (dicom_bytes() for _ in range(3))
+    selected["file"] = Upload(completed_file)
+    save = Mock(side_effect=[
+        {"case_id": "CASE-SAVED", "status": "접수", "qc": {"issues": []}},
+        cases.RegistrationError("테스트 등록 실패"),
+    ])
+    monkeypatch.setattr(cases, "register_case", save)
+    app.run()
+    register_button(app).click().run()
+    selected["file"] = Upload(failed_file)
+    app.run()
+    register_button(app).click().run()
+    assert any("테스트 등록 실패" in e.value for e in app.error)
+
+    selected["file"] = Upload(new_file)
+    app.run()
+    assert not app.exception and not app.error
+    selected["file"] = Upload(completed_file)
+    app.run()
+    assert not app.error and register_button(app).disabled
+    assert any("CASE-SAVED 등록됨" in s.value for s in app.success)
+
+    selected["file"] = Upload(failed_file)
+    app.run()
+    assert any("테스트 등록 실패" in e.value for e in app.error)
+    selected["file"] = None
+    app.run()
+    assert not app.error
+    assert save.call_count == 2
