@@ -39,6 +39,10 @@ from core.quality import QC_THRESHOLDS, detect_foreign_objects, image_quality
 DEFAULT_DICOM_DIR = ROOT / "data" / "vindr-spinexr"
 DEFAULT_YOLO_DIR = ROOT / "data" / "vindr-yolo"
 
+# 추론 NMS IoU 및 GT 매칭 평가 IoU 상수 (비교 문서·Colab 노트북과 동일 기준으로 분리·통일)
+NMS_IOU = 0.45    # YOLO/ONNX 추론·후처리 NMS IoU 기준
+MATCH_IOU = 0.50  # GT 1:1 매칭 엄격 평가 IoU 기준 (IoU >= 0.50)
+
 # docs/experiments/qc_thresholds.md 및 docs/data.md에 확정 기록된 대표 척추 X-ray 5종 (test 분할)
 REPRESENTATIVE_5: list[tuple[str, str]] = [
     ("정상", "3414ac0c4bf2aded206569cbeaaead3e"),
@@ -180,7 +184,7 @@ def evaluate_opencv_records(records: list[dict], mode: str) -> dict:
 
     매칭 순서 및 중복 처리 규칙:
     - iou50       : 예측 박스를 원시 평균 밝기(mean) 내림차순 정렬 후, 각 예측의 최대 IoU GT가
-                    IoU >= 0.50이고 미매칭이면 1:1 TP 할당. 동일 GT에 중복 적중한 추가 박스는 모두 FP.
+                    IoU >= MATCH_IOU(0.50)이고 미매칭이면 1:1 TP 할당. 동일 GT에 중복 적중한 추가 박스는 모두 FP.
     - iou0_1to1   : IoU > 0인 모든 (pred, gt) 쌍을 IoU 내림차순 정렬해 1:1 greedy 매칭. 중복 적중 박스는 FP.
     - center_1to1 : 예측 중심이 GT 내부에 포함되는 쌍을 IoU 내림차순 1:1 greedy 매칭. 중복 박스는 FP.
     - iou0_any    : 다대일 파편 허용 참고 지표. GT는 1개 이상 겹치면 TP, 예측은 어떤 GT와도 겹치지 않을 때만 FP.
@@ -210,7 +214,7 @@ def evaluate_opencv_records(records: list[dict], mode: str) -> dict:
                 if len(gt) == 0:
                     continue
                 gi = int(np.argmax(iou_mat[pi]))
-                if iou_mat[pi, gi] >= 0.50 and gi not in matched_gt:
+                if iou_mat[pi, gi] >= MATCH_IOU and gi not in matched_gt:
                     matched_gt.add(gi)
                     matched_pred.add(pi)
             tp, fp, fn = len(matched_pred), len(preds) - len(matched_pred), len(gt) - len(matched_gt)
@@ -301,7 +305,7 @@ def run_opencv_benchmark(dicom_dir: Path, yolo_dir: Path) -> None:
         objs_th = detect_tophat_border5(pixels)
         buckets["tophat51_border5"].append({"gt": gt, "objects": objs_th, "elapsed": time.perf_counter() - t0})
 
-    print(f"\n=== OpenCV 비교 실험 결과 (test {len(img_ids)}장) ===")
+    print(f"\n=== OpenCV 비교 실험 결과 (test {len(img_ids)}장, Match IoU >= {MATCH_IOU:.2f}) ===")
     for name, recs in buckets.items():
         print(f"\n[{name}]")
         for mode in ("iou50", "iou0_1to1", "center_1to1", "iou0_any"):
