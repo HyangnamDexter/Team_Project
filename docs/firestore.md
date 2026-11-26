@@ -244,3 +244,27 @@ firebase-admin은 이 규칙을 무시하므로 **권한 검사는 반드시 코
 | case_history | `case_id` ↑, `at` ↓ | 케이스 이력 |
 
 쿼리를 처음 실행했을 때 Firestore 오류 메시지에 나오는 링크로 인덱스를 만들어도 된다.
+
+## 8. 뷰어·검토 서비스 추가 저장 항목
+
+- `images.sop_instance_uid`: VinDr `ground_truth/{SOPInstanceUID}` 연결 키. 새 등록 시 저장합니다.
+  이전 등록은 권한 확인 후 원본 헤더에서 키를 읽어 조회합니다.
+- `ground_truth/{SOPInstanceUID}`: `{source, study_id, split, label, class_name, boxes, n_boxes}`.
+  `boxes`는 원본 픽셀 기준 `{xmin, ymin, xmax, ymax}`입니다. 가져오기는 A의 관리 스크립트를 재사용합니다.
+- `detections/{image_id}` / `opencv_detections/{image_id}`: 원본 좌표의 `boxes`, `status`, `case_id`,
+  `model`, `conf`, `run_at`, `run_by`, `run_id`. 모델/규칙 기반 검출을 각각 저장합니다.
+- `detection_reviews/{image_id}_{source}_{signature}_{box_index}`: `{case_id, image_id, source,
+  box_index, box, fingerprint, verdict, reviewed_by, reviewed_at, edits}`.
+  `verdict`는 `맞음` 또는 `오검출`이며, 현재 탐지 실행의 서명을 확인한 뒤 트랜잭션으로 저장합니다.
+- `processing_keys/{run_key}`: `{log_id, run_at}`. 처리 로그와 같은 트랜잭션으로 갱신하며
+  10초 이내 동일 조건 중복 실행을 막습니다. 결과 PNG를 먼저 쓴 후 DB를 저장하고,
+  재사용된 실행의 불필요한 PNG는 삭제합니다. DB 응답 유실 시 문서를 다시 읽어 확인하며
+  확인도 실패한 경우 파일을 보존합니다.
+- 메모·리포트는 기존 `notes` 형식을 사용합니다. 수정 시 원문과 작성자·시간을 `edits`에 보존하며
+  `case_history`에도 메모 작성·수정 이벤트를 남깁니다. 화면이 읽은 내용과 현재 내용을 비교하여
+  동시 수정으로 인한 덮어쓰기를 거절합니다.
+
+처리·탐지·박스 판정은 담당 판독의의 `검토 중` 케이스에서만 저장할 수 있습니다.
+조회는 기존 역할별 케이스 접근 규칙을 따릅니다. 모든 변경 서비스에서 상태·담당자를
+트랜잭션 안에서 다시 확인합니다. 관리자에게는 관리 메모만 허용하며 판독 리포트는 작성하지 못합니다.
+원본·결과 파일 경로는 지정 저장 영역 안인지 검사합니다.

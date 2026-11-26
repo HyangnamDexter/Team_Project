@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pydicom
 from pydicom.multival import MultiValue
+from core.dicom_privacy import identifier_tags
 
 SUPPORTED_MODALITIES = {"CR", "DX", "CT", "MR"}
 
@@ -90,6 +91,9 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
             "window_center": center, "window_width": width,
             "photometric_interpretation": photo,
             "present_tags": [e.keyword for e in ds if e.keyword and not e.is_empty],
+            "phi_tags": identifier_tags(ds),
+            "sop_instance_uid": str(getattr(ds, "SOPInstanceUID", "") or ""),
+            "burned_in_annotation": str(getattr(ds, "BurnedInAnnotation", "") or ""),
         }
         for key, tag in (("image_position", "ImagePositionPatient"),
                          ("image_orientation", "ImageOrientationPatient"),

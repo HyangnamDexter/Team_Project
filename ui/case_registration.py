@@ -94,6 +94,8 @@ def render_registration(user: dict) -> None:
                 st.warning(f"{result['case_id']} 등록됨 — 재촬영 요청: {reasons}")
             else:
                 st.success(f"{result['case_id']} 등록됨 ({result['status']})")
+            for warning in result.get("qc", {}).get("warnings", []):
+                st.warning(warning)
             st.caption("이미 등록한 파일입니다. 다른 영상을 선택하면 새로 등록할 수 있습니다.")
         error = st.session_state.get("cases_registration_error")
         if error and error[0] == token:
