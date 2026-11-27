@@ -5,12 +5,15 @@ body{margin:0;background:transparent;font-family:Arial,sans-serif}
 canvas{display:block;width:100%;background:#10151c;border-radius:6px;touch-action:none;outline-offset:-3px}
 canvas:focus-visible{outline:2px solid #55d6be}
 </style></head>
-<body><canvas tabindex="0" aria-label="DICOM 영상. 클릭하여 확대, 드래그하여 이동하거나 길이 측정 모드에서 두 점을 선택하세요."></canvas>
+<body><canvas tabindex="0" aria-label="DICOM 영상. 도구를 선택해 확대·이동, 길이 측정, ROI 선택 또는 펜으로 그릴 수 있습니다."></canvas>
+<script src="ink.js"></script>
 <script>
 const canvas = document.querySelector('canvas');
 const ctx = canvas.getContext('2d');
 let args, image, area, drag, preview, pointerPosition;
 let loadVersion = 0, eventNumber = 0;
+const ink = new InkLayer();
+const eraserRadius = 12; // 화면 픽셀 기준 지우개 반경
 function send(type, fields) {
     window.parent.postMessage({isStreamlitMessage:true, type, ...fields}, '*');
 }
@@ -40,7 +43,7 @@ function draw() {
     const crop = preview || args.crop;
     const scale = Math.min(width / crop[2], height / crop[3]);
     area = {x:(width-crop[2]*scale)/2, y:(height-crop[3]*scale)/2,
-            width:crop[2]*scale, height:crop[3]*scale, crop};
+            width:crop[2]*scale, height:crop[3]*scale, crop, scale};
     ctx.drawImage(image, ...crop, area.x, area.y, area.width, area.height);
     const points = [...args.points];
     if (points.length === 1 && pointerPosition && args.mode === 'measure') points.push(pointerPosition);
@@ -73,6 +76,14 @@ function draw() {
                        roi.w*scale,roi.h*scale);
         ctx.setLineDash([]);
     }
+    ink.draw(ctx, area, crop, scale);
+    if (args.mode === 'eraser' && pointerPosition) {
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(area.x+(pointerPosition[0]+0.5-crop[0])*scale,
+                area.y+(pointerPosition[1]+0.5-crop[1])*scale,eraserRadius,0,2*Math.PI);
+        ctx.stroke();
+    }
     ctx.lineWidth = 2; ctx.strokeStyle = '#4dffcf'; ctx.fillStyle = '#4dffcf';
     const screenPoints = points.map(p => [area.x+(p[0]+0.5-crop[0])*scale,
                                          area.y+(p[1]+0.5-crop[1])*scale]);
@@ -91,7 +102,7 @@ function draw() {
     }
     ctx.restore();
     canvas.style.cursor = args.read_only ? 'default' :
-        (['measure','roi'].includes(args.mode) ? 'crosshair' : (drag ? 'grabbing' : 'zoom-in'));
+        (['measure','roi','pen','eraser'].includes(args.mode) ? 'crosshair' : (drag ? 'grabbing' : 'zoom-in'));
     send('streamlit:setFrameHeight', {height:Math.ceil(height)});
 }
 function coordinate(event) {
@@ -108,16 +119,35 @@ function navigate(crop, zoom) {
     emit('navigate', {zoom, x:Math.round(x), y:Math.round(y)});
 }
 canvas.addEventListener('pointerdown', event => {
-    if (!args || args.disabled || args.read_only || event.button !== 0) return;
+    if (!args || args.disabled || args.read_only || event.button !== 0 || event.isPrimary === false || drag) return;
     const start = coordinate(event);
     if (!start) return;
     canvas.focus();
-    drag = {start, crop:[...args.crop], moved:false};
+    event.preventDefault();
+    drag = {start, crop:[...args.crop], moved:false, pointerId:event.pointerId, last:start.point};
+    pointerPosition = start.point;
+    if (args.mode === 'pen') ink.begin(start.point,args.pen_color,args.pen_width,area.scale);
+    if (args.mode === 'eraser') {
+        ink.beginErase();
+        ink.erase(start.point,start.point,eraserRadius/area.scale);
+    }
     canvas.setPointerCapture(event.pointerId);
+    draw();
 });
 canvas.addEventListener('pointermove', event => {
-    if (!args) return;
+    if (!args || (drag && event.pointerId !== drag.pointerId)) return;
     pointerPosition = coordinate(event)?.point;
+    if (drag && ['pen','eraser'].includes(args.mode)) {
+        event.preventDefault();
+        const events = event.getCoalescedEvents?.() || [event];
+        for (const sample of events.length ? events : [event]) {
+            const position = coordinate(sample)?.point;
+            if (!position) continue;
+            if (args.mode === 'pen') ink.move(position);
+            else ink.erase(drag.last,position,eraserRadius/area.scale);
+            drag.last = position;
+        }
+    }
     if (drag && args.mode === 'navigate') {
         const bounds = canvas.getBoundingClientRect();
         const dx = event.clientX-bounds.left-drag.start.x;
@@ -132,12 +162,18 @@ canvas.addEventListener('pointermove', event => {
     draw();
 });
 canvas.addEventListener('pointerup', event => {
-    if (!drag) return;
+    if (!drag || event.pointerId !== drag.pointerId) return;
     const start = drag.start, moved = drag.moved;
+    const end = coordinate(event);
+    const previousPoint = drag.last;
     drag = null;
     canvas.releasePointerCapture(event.pointerId);
-    if (args.mode === 'roi') {
-        const end = coordinate(event);
+    if (args.mode === 'pen') {
+        ink.finish(end?.point);
+    } else if (args.mode === 'eraser') {
+        if (end) ink.erase(previousPoint,end.point,eraserRadius/area.scale);
+        ink.finishErase();
+    } else if (args.mode === 'roi') {
         if (end) emit('roi', {start:start.point,end:end.point});
     } else if (args.mode === 'measure') {
         const end = coordinate(event);
@@ -152,11 +188,13 @@ canvas.addEventListener('pointerup', event => {
                       Math.max(0,Math.min(args.rows-h,start.point[1]+0.5-h/2)),w,h];
         navigate(crop,zoom);
     }
+    if (event.pointerType === 'touch') pointerPosition = null;
     draw();
 });
 canvas.addEventListener('contextmenu', event => {
     if (!args || args.disabled || args.read_only) return;
     event.preventDefault();
+    if (args.mode !== 'navigate') return;
     const position = coordinate(event);
     if (!position || args.zoom <= 1) return;
     const zoom = Math.max(1, Math.round((args.zoom-0.5)*10)/10);
@@ -170,13 +208,20 @@ canvas.addEventListener('contextmenu', event => {
     preview = null;
     navigate(crop,zoom);
 });
-canvas.addEventListener('pointercancel', () => {drag=null;preview=null;draw();});
+canvas.addEventListener('pointercancel', event => {
+    if (drag && event.pointerId !== drag.pointerId) return;
+    ink.cancel();drag=null;preview=null;pointerPosition=null;draw();
+});
 canvas.addEventListener('pointerleave', () => {pointerPosition=null;draw();});
 window.addEventListener('resize',draw);
 window.addEventListener('message', event => {
     if (event.source !== window.parent || event.data.type !== 'streamlit:render') return;
+    ink.cancel();
     args = {...event.data.args, disabled:event.data.disabled};
+    ink.setContext(args.drawing_token || args.token);
+    ink.applyCommand(args.pen_command);
     preview = null; drag = null; pointerPosition = null;
+    area = null; image = null;
     const version = ++loadVersion;
     const next = new Image();
     next.onload = () => {if (version===loadVersion) {image=next;draw();}};

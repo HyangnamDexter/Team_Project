@@ -7,7 +7,7 @@ import streamlit as st
 
 from core.dicom_io import InvalidDicomError, apply_window, auto_window, load_dicom
 from core.viewer_geometry import measure_distance, roi_from_points, viewport
-from core.workflow import PermissionDenied
+from core.workflow import PermissionDenied, READER
 from services.access import case_images, original_path
 from services.db import get_db
 from services.review import visible_cases
@@ -40,6 +40,12 @@ def clear_measurement():
 
 def invalidate_canvas():
     st.session_state.viewer_epoch = st.session_state.get("viewer_epoch", 0) + 1
+
+
+def pen_command(action):
+    sequence = st.session_state.get("viewer_pen_command_seq", 0) + 1
+    st.session_state.viewer_pen_command_seq = sequence
+    st.session_state.viewer_pen_command = {"id": sequence, "action": action}
 
 
 def accept_canvas_event(token, shape):
@@ -187,20 +193,39 @@ if "Modality" in header.get("missing_tags", []):
 
 controls = st.sidebar
 display = st.container()
+pen_color, pen_width = "#ff4d4f", 4
 with controls:
     st.subheader("표시 설정")
     st.button("화면 초기화", on_click=reset_view, args=(default_center, default_width))
     st.button("자동 윈도우", on_click=set_window, args=(auto_center, auto_width))
     center = st.number_input("윈도우 중심 (밝기)", key="viewer_center", step=1.0)
     width = st.number_input("윈도우 폭 (대비)", min_value=1.0, key="viewer_width", step=1.0)
-    tool = st.radio("마우스 도구", ["확대·이동", "길이 측정", "ROI 선택"], key="viewer_tool",
+    tools = ["확대·이동", "길이 측정", "ROI 선택"]
+    if user["role"] == READER:
+        tools += ["펜", "지우개"]
+    if st.session_state.get("viewer_tool") not in tools:
+        st.session_state.viewer_tool = tools[0]
+    tool = st.radio("마우스 도구", tools, key="viewer_tool",
                     on_change=invalidate_canvas)
     if tool == "확대·이동":
         st.caption("좌클릭 확대 · 우클릭 축소 · 드래그 이동")
     elif tool == "길이 측정":
         st.caption("뼈의 양 끝을 차례로 클릭하세요. 세 번째 클릭은 새 측정을 시작합니다.")
-    else:
+    elif tool == "ROI 선택":
         st.caption("영상 위를 드래그해서 처리할 사각형 영역을 선택하세요.")
+    elif tool == "펜":
+        st.caption("오른쪽 영상 위에 마우스·손가락·펜으로 그리세요.")
+    else:
+        st.caption("그림을 문지르면 닿은 선 전체가 지워집니다. 박스·측정선은 지우지 않습니다.")
+    if user["role"] == READER:
+        with st.expander("펜 설정", expanded=tool in {"펜", "지우개"}):
+            color = st.selectbox("펜 색", ["빨강", "노랑", "초록"], key="viewer_pen_color")
+            pen_color = {"빨강": "#ff4d4f", "노랑": "#ffe34d", "초록": "#30e878"}[color]
+            pen_width = st.select_slider("펜 굵기", [2, 4, 8], value=4, key="viewer_pen_width",
+                                        format_func=lambda n: {2: "가늘게", 4: "보통", 8: "굵게"}[n])
+            st.button("펜 되돌리기", key="pen_undo", on_click=pen_command, args=("undo",))
+            st.button("그림 전체 지우기", key="pen_clear", on_click=pen_command, args=("clear",))
+            st.caption("임시 그림입니다. 원본에는 저장하지 않으며, 다른 영상으로 바꾸면 지워집니다.")
     st.button("측정 지우기", on_click=clear_measurement)
     zoom = st.slider("확대 배율", 1.0, 4.0, step=0.1, key="viewer_zoom")
     x = st.slider("가로 위치", 0, 100, key="viewer_x", disabled=zoom == 1.0)
@@ -244,10 +269,12 @@ with display:
         st.subheader(result_label)
         image_canvas(image, rows=image.shape[0], cols=image.shape[1],
                      crop=[left, top, crop_width, crop_height], zoom=zoom,
-                     mode={"길이 측정": "measure", "ROI 선택": "roi"}.get(tool, "navigate"),
+                     mode={"길이 측정": "measure", "ROI 선택": "roi", "펜": "pen", "지우개": "eraser"}.get(tool, "navigate"),
                      points=points, label=label, token=token,
                      epoch=st.session_state.viewer_epoch, read_only=False, max_height=420,
-                     boxes=boxes, roi=roi, key="viewer_canvas", default=None)
+                     boxes=boxes, roi=roi, key="viewer_canvas", default=None,
+                     drawing_token=f"{user['uid']}:{token}", pen_color=pen_color, pen_width=pen_width,
+                     pen_command=st.session_state.get("viewer_pen_command"))
         st.caption(f"{zoom:.1f}배 · 표시 영역 x={left}, y={top}, "
                    f"너비={crop_width}, 높이={crop_height}")
 render_histogram(input_image, image, roi)
