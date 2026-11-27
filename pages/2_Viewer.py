@@ -6,7 +6,13 @@ import numpy as np
 import streamlit as st
 
 from core.dicom_io import InvalidDicomError, apply_window, auto_window, load_dicom
-from core.viewer_geometry import measure_distance, viewport
+from core.viewer_geometry import measure_distance, roi_from_points, viewport
+from core.workflow import PermissionDenied
+from services.access import case_images, original_path
+from services.db import get_db
+from services.review import visible_cases
+from ui.viewer_tools import (render_history, render_processing, render_overlays,
+                             processed_image, render_histogram)
 from ui.dicom_canvas import image_canvas
 from services.auth import require_login
 
@@ -22,6 +28,9 @@ def reset_view(center, width):
     st.session_state.viewer_x = 50
     st.session_state.viewer_y = 50
     clear_measurement()
+    st.session_state.viewer_roi = None
+    st.session_state.viewer_roi_enabled = False
+    st.session_state.pop("viewer_processed", None)
 
 
 def clear_measurement():
@@ -55,6 +64,12 @@ def accept_canvas_event(token, shape):
                 and 0 <= point[0] <= shape[1] - 1 and 0 <= point[1] <= shape[0] - 1):
             points = st.session_state.get("viewer_points", [])
             st.session_state.viewer_points = points + [point] if len(points) == 1 else [point]
+    elif event.get("kind") == "roi":
+        try:
+            st.session_state.viewer_roi = roi_from_points(event["start"], event["end"], shape)
+            st.session_state.viewer_roi_enabled = True
+        except (KeyError, TypeError, ValueError, OverflowError):
+            pass
 
 
 st.set_page_config(page_title="영상 뷰어", layout="wide")
@@ -64,10 +79,45 @@ st.session_state.setdefault("viewer_epoch", 0)
 st.session_state.setdefault("viewer_points", [])
 st.title("영상 뷰어")
 st.caption("X-ray 단일 DICOM 영상")
+registered_image_id = None
+registered_case = None
+registered_image = None
+db = None
+storage_root = None
 
 with st.sidebar:
-    source = st.radio("영상 선택 방법", ["샘플 영상", "파일 업로드"], horizontal=True)
-    if source == "샘플 영상":
+    source = st.radio("영상 선택 방법", ["샘플 영상", "파일 업로드", "등록된 케이스"],
+                      key="viewer_source")
+    if source == "등록된 케이스":
+        try:
+            db = get_db()
+            choices = visible_cases(user, db=db, limit=1000)
+            by_case = {c["case_id"]: c for c in choices}
+            if not choices:
+                st.info("조회 가능한 등록 케이스가 없습니다.")
+                st.stop()
+            ids = list(by_case)
+            wanted = st.session_state.get("viewer_case_id")
+            case_id = st.selectbox("등록 케이스", ids, index=ids.index(wanted) if wanted in by_case else 0)
+            registered_case = by_case[case_id]
+            images = case_images(user, case_id, db=db)
+            if not images:
+                st.info("케이스에 등록된 영상이 없습니다.")
+                st.stop()
+            by_image = {r["image_id"]: r for r in images}
+            wanted_image = st.session_state.get("viewer_image_id")
+            image_ids = list(by_image)
+            registered_image_id = st.selectbox("등록 영상", image_ids,
+                index=image_ids.index(wanted_image) if wanted_image in by_image else 0)
+            registered_image = by_image[registered_image_id]
+            storage_root = Path(st.secrets["storage"]["image_dir"])
+            file = original_path(registered_image, storage_root)
+            file_id = (user["uid"], registered_image_id, file.stat().st_mtime_ns)
+            filename = f"{case_id} / {registered_image_id}"
+        except Exception as exc:
+            st.error(str(exc) if isinstance(exc, (PermissionDenied, ValueError)) else "등록 영상을 불러오지 못했습니다.")
+            st.stop()
+    elif source == "샘플 영상":
         sample_dir = Path(__file__).resolve().parents[1] / "data" / "sample"
         samples = sorted(p for p in sample_dir.glob("*")
                          if p.is_file() and p.suffix.lower() in {".dcm", ".dicom"})
@@ -95,6 +145,8 @@ if st.session_state.get("viewer_file_id") != file_id:
     try:
         with st.spinner("영상을 읽는 중입니다."):
             pixels, header = load_dicom(file)
+        if registered_image:
+            header = dict(header, modality=registered_image["modality"])
         auto_center, auto_width = auto_window(pixels)
         center, width = header["window_center"], header["window_width"]
         if center is None or width is None:
@@ -115,9 +167,20 @@ if any(key not in st.session_state for key in
        ("viewer_center", "viewer_width", "viewer_zoom", "viewer_x", "viewer_y")):
     reset_view(default_center, default_width)
 token = sha256(repr(file_id).encode()).hexdigest()
+render_history(user, registered_image_id, registered_case, db, storage_root, token)
 accept_canvas_event(token, pixels.shape)
 st.caption(f"{filename} · {header['cols']} × {header['rows']} px · "
            f"촬영 종류 {header['modality'] or '미기재'}")
+if registered_image:
+    with st.sidebar.expander("등록 품질·태그 점검"):
+        qc = registered_image.get("qc", {})
+        st.write({k: qc.get(k) for k in ("result", "thresholds_version", "brightness", "contrast", "sharpness")})
+        st.write("필수 태그 누락:", qc.get("missing_tags", []))
+        st.write("저장 전 제거한 개인정보 태그:", qc.get("phi_removed", []))
+        for issue in qc.get("issues", []):
+            st.warning(issue)
+        for warning in qc.get("warnings", []):
+            st.warning(warning)
 if "Modality" in header.get("missing_tags", []):
     with st.sidebar:
         st.warning("촬영 종류(Modality) 태그가 없습니다. 등록 정보를 확인하세요.")
@@ -130,12 +193,14 @@ with controls:
     st.button("자동 윈도우", on_click=set_window, args=(auto_center, auto_width))
     center = st.number_input("윈도우 중심 (밝기)", key="viewer_center", step=1.0)
     width = st.number_input("윈도우 폭 (대비)", min_value=1.0, key="viewer_width", step=1.0)
-    tool = st.radio("마우스 도구", ["확대·이동", "길이 측정"], key="viewer_tool",
+    tool = st.radio("마우스 도구", ["확대·이동", "길이 측정", "ROI 선택"], key="viewer_tool",
                     on_change=invalidate_canvas)
     if tool == "확대·이동":
         st.caption("좌클릭 확대 · 우클릭 축소 · 드래그 이동")
-    else:
+    elif tool == "길이 측정":
         st.caption("뼈의 양 끝을 차례로 클릭하세요. 세 번째 클릭은 새 측정을 시작합니다.")
+    else:
+        st.caption("영상 위를 드래그해서 처리할 사각형 영역을 선택하세요.")
     st.button("측정 지우기", on_click=clear_measurement)
     zoom = st.slider("확대 배율", 1.0, 4.0, step=0.1, key="viewer_zoom")
     x = st.slider("가로 위치", 0, 100, key="viewer_x", disabled=zoom == 1.0)
@@ -144,7 +209,15 @@ with controls:
 if not np.isfinite(center) or not np.isfinite(width):
     st.error("윈도우 중심과 폭에 유한한 숫자를 입력하세요.")
     st.stop()
-image = apply_window(pixels, center, width)
+window = {"center": center, "width": width}
+input_image = apply_window(pixels, center, width)
+roi = render_processing(user, pixels, window, registered_image_id, registered_case, db, storage_root, token)
+image, result_label = processed_image(input_image, window, token)
+try:
+    boxes = render_overlays(user, registered_image_id, registered_case, db, storage_root)
+except Exception:
+    st.warning("탐지·정답 데이터를 조회하지 못했습니다. 연결을 확인하세요.")
+    boxes = []
 left, top, crop_width, crop_height = viewport(image.shape, zoom, x, y)
 points = st.session_state.get("viewer_points", [])
 label = ""
@@ -161,19 +234,23 @@ with display:
     original, adjusted = st.columns(2)
     with original:
         st.subheader("원본")
-        image_canvas(apply_window(pixels, default_center, default_width),
+        image_canvas(input_image,
                      rows=image.shape[0], cols=image.shape[1],
                      crop=[0, 0, image.shape[1], image.shape[0]], zoom=1.0,
                      mode="view", points=[], label="", token=token,
                      epoch=st.session_state.viewer_epoch, read_only=True,
-                     max_height=420, key="viewer_original", default=None)
+                     max_height=420, boxes=boxes, roi=roi, key="viewer_original", default=None)
     with adjusted:
-        st.subheader("조절 결과")
+        st.subheader(result_label)
         image_canvas(image, rows=image.shape[0], cols=image.shape[1],
                      crop=[left, top, crop_width, crop_height], zoom=zoom,
-                     mode="measure" if tool == "길이 측정" else "navigate",
+                     mode={"길이 측정": "measure", "ROI 선택": "roi"}.get(tool, "navigate"),
                      points=points, label=label, token=token,
                      epoch=st.session_state.viewer_epoch, read_only=False, max_height=420,
-                     key="viewer_canvas", default=None)
+                     boxes=boxes, roi=roi, key="viewer_canvas", default=None)
         st.caption(f"{zoom:.1f}배 · 표시 영역 x={left}, y={top}, "
                    f"너비={crop_width}, 높이={crop_height}")
+render_histogram(input_image, image, roi)
+if registered_image_id and st.button("이 케이스 검토하기"):
+    st.session_state.review_case_id = registered_image["case_id"]
+    st.switch_page("pages/3_Review.py")

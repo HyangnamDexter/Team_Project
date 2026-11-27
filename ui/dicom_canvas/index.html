@@ -46,6 +46,33 @@ function draw() {
     if (points.length === 1 && pointerPosition && args.mode === 'measure') points.push(pointerPosition);
     ctx.save();
     ctx.beginPath(); ctx.rect(area.x,area.y,area.width,area.height); ctx.clip();
+    // 박스와 ROI는 항상 원본 좌표로 보관하고 현재 crop의 배율로만 변환한다.
+    for (const box of args.boxes || []) {
+        ctx.strokeStyle = box.color;
+        ctx.lineWidth = 2;
+        const bx = area.x + (box.xmin-crop[0])*scale;
+        const by = area.y + (box.ymin-crop[1])*scale;
+        ctx.strokeRect(bx, by, (box.xmax-box.xmin)*scale, (box.ymax-box.ymin)*scale);
+        ctx.font = 'bold 12px Arial';
+        const text = String(box.label || '');
+        ctx.fillStyle = '#10151c';
+        ctx.fillRect(bx, Math.max(area.y,by-17), ctx.measureText(text).width+6, 17);
+        ctx.fillStyle = box.color;
+        ctx.fillText(text,bx+3,Math.max(area.y+13,by-4));
+    }
+    let roi = args.roi;
+    if (args.mode === 'roi' && drag && pointerPosition) {
+        roi = {x:Math.min(drag.start.point[0],pointerPosition[0]),
+               y:Math.min(drag.start.point[1],pointerPosition[1]),
+               w:Math.abs(drag.start.point[0]-pointerPosition[0])+1,
+               h:Math.abs(drag.start.point[1]-pointerPosition[1])+1};
+    }
+    if (roi) {
+        ctx.strokeStyle = '#ff85d0'; ctx.lineWidth = 2; ctx.setLineDash([6,4]);
+        ctx.strokeRect(area.x+(roi.x-crop[0])*scale,area.y+(roi.y-crop[1])*scale,
+                       roi.w*scale,roi.h*scale);
+        ctx.setLineDash([]);
+    }
     ctx.lineWidth = 2; ctx.strokeStyle = '#4dffcf'; ctx.fillStyle = '#4dffcf';
     const screenPoints = points.map(p => [area.x+(p[0]+0.5-crop[0])*scale,
                                          area.y+(p[1]+0.5-crop[1])*scale]);
@@ -64,7 +91,7 @@ function draw() {
     }
     ctx.restore();
     canvas.style.cursor = args.read_only ? 'default' :
-        (args.mode === 'measure' ? 'crosshair' : (drag ? 'grabbing' : 'zoom-in'));
+        (['measure','roi'].includes(args.mode) ? 'crosshair' : (drag ? 'grabbing' : 'zoom-in'));
     send('streamlit:setFrameHeight', {height:Math.ceil(height)});
 }
 function coordinate(event) {
@@ -109,7 +136,10 @@ canvas.addEventListener('pointerup', event => {
     const start = drag.start, moved = drag.moved;
     drag = null;
     canvas.releasePointerCapture(event.pointerId);
-    if (args.mode === 'measure') {
+    if (args.mode === 'roi') {
+        const end = coordinate(event);
+        if (end) emit('roi', {start:start.point,end:end.point});
+    } else if (args.mode === 'measure') {
         const end = coordinate(event);
         if (end && Math.hypot(end.x-start.x,end.y-start.y)<=4) emit('measure',{point:end.point});
     } else if (moved && preview) {

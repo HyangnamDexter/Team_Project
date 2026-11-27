@@ -29,6 +29,7 @@ from io import BytesIO
 from pathlib import Path
 
 from core.dicom_io import apply_window, load_dicom
+from core.dicom_privacy import remove_identifiers
 from core.quality import QC_THRESHOLDS_VERSION, image_quality, tag_check
 from core.workflow import QC_FAILED, RADIOGRAPHER, RECEIVED, require_role
 
@@ -56,22 +57,20 @@ def run_checks(pixels, header: dict) -> dict:
     center, width = header.get("window_center"), header.get("window_width")
     img = apply_window(pixels, center, width) if center is not None and width is not None else apply_window(pixels)
     quality = image_quality(img, modality)
-    try:
-        tags = tag_check(header, modality)
-    except NotImplementedError:  # TODO(B): tag_check 가 구현되면 이 처리는 필요 없다
-        tags = {"missing": [], "phi_found": [], "issues": []}
+    tags = tag_check(header, modality)
     issues = quality["issues"] + tags["issues"]
     return {
-        "result": "fail" if issues else "pass",
+        "result": "fail" if issues else ("warning" if tags["warnings"] else "pass"),
         "modality": modality,
         "sampled_slices": [0],
         "brightness": quality["brightness"],
         "contrast": quality["contrast"],
         "sharpness": quality["sharpness"],
         "missing_tags": sorted(set(header.get("missing_tags", [])) | set(tags["missing"])),
-        "phi_removed": [],  # TODO(B): 개인정보 태그 제거(FR-53) 연결
+        "phi_removed": [],
         "series": None,
         "issues": issues,
+        "warnings": tags["warnings"],
         "thresholds_version": QC_THRESHOLDS_VERSION,
     }
 
@@ -93,9 +92,13 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, mod
     if not data:
         raise RegistrationError("빈 파일은 등록할 수 없습니다.")
     pixels, header = load_dicom(BytesIO(data))
+    data, removed = remove_identifiers(data)
+    if removed:
+        pixels, header = load_dicom(BytesIO(data))
     header = dict(header, **_resolve_modality(header.get("modality"), modality))
 
     qc = run_checks(pixels, header)
+    qc["phi_removed"] = removed
     status = QC_FAILED if qc["issues"] else RECEIVED
     now = now or datetime.now(timezone.utc)
     root = Path(storage_root)
@@ -141,6 +144,7 @@ def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, status: str,
         "case_id": case_id,
         "modality": header["modality"],
         "series_uid": header.get("series_uid", ""),
+        "sop_instance_uid": header.get("sop_instance_uid") or None,
         "original_dir": f"{case_id}/{image_id}/original",  # 저장소(storage.image_dir) 기준 상대 경로
         "num_slices": 1,
         "slice_files": [SLICE_FILE],

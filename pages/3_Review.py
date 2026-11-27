@@ -4,6 +4,7 @@ import streamlit as st
 from core.workflow import PermissionDenied
 from services.auth import require_login
 from services.db import get_db
+from ui.review_tools import render_review_tools
 from services.review import (
     ACTION_LABELS, ReviewError, assign_reader, available_actions, complete_review, list_readers,
     request_rereview, request_retake, start_review, visible_cases,
@@ -93,4 +94,7 @@ for action in actions:
         if st.button(label, type="primary"):
             run(label, complete_review)
 
-# TODO(B): 메모·리포트 작성, 처리 이력 조회 (검토 완료에는 type == "report" 메모가 필요)
+try:
+    render_review_tools(user, case_id, case, db)
+except Exception as exc:
+    st.error(str(exc) if isinstance(exc, PermissionDenied) else "검토 자료를 불러오지 못했습니다. 연결을 확인하세요.")

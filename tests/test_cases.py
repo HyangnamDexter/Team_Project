@@ -376,3 +376,26 @@ def test_file_modality_wins_over_choice(tmp_path):
                   modality="DX", now=NOW, ids=IDS)
     image = db.data["images"][IDS[1]]
     assert image["modality"] == "CR" and image["modality_source"] == "file"
+
+
+@pytest.mark.parametrize("with_private_name", [False, True])
+def test_registration_accepts_window_tags_with_trailing_commas(tmp_path, with_private_name):
+    import warnings
+
+    extra = {"PatientName": "Synthetic^Patient"} if with_private_name else {}
+    raw = dicom_bytes(WindowCenter=2000.0, WindowWidth=4000.0, **extra)
+    assert raw.count(b"2000.0") == 1 and raw.count(b"4000.0") == 1
+    data = raw.replace(b"2000.0", b"2000, ").replace(b"4000.0", b"4000, ")
+    db = FakeDB()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        result = register(db, tmp_path, data)
+    image = db.data["images"][result["image_id"]]
+    assert image["window_center"] == 2000.0 and image["window_width"] == 4000.0
+    stored = (tmp_path / image["original_dir"] / "0001.dcm").read_bytes()
+    if with_private_name:
+        import pydicom
+        assert "PatientName" not in pydicom.dcmread(BytesIO(stored))
+        assert "PatientName" in result["qc"]["phi_removed"]
+    else:
+        assert stored == data

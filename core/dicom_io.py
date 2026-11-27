@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pydicom
 from pydicom.multival import MultiValue
+from core.dicom_privacy import identifier_tags
 
 SUPPORTED_MODALITIES = {"CR", "DX", "CT", "MR"}
 
@@ -34,6 +35,10 @@ def _number(ds, name, default=None):
         return default
     if isinstance(value, MultiValue):
         value = value[0]
+    if isinstance(value, str) and name in {"WindowCenter", "WindowWidth"}:
+        # 일부 VinDr 영상은 DS 끝에 쉼표가 붙어 문자열로 읽힌다.
+        # 다중 윈도우도 기존 규칙대로 첫 값만 사용하며 끝 쉼표 하나만 보정한다.
+        value = value.split("\\", 1)[0].strip().removesuffix(",").strip()
     value = float(value)
     if not np.isfinite(value):
         raise InvalidDicomError(f"{name} 값이 유효하지 않습니다.")
@@ -49,6 +54,7 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
     Modality 누락·빈 값은 modality="", missing_tags=["Modality"]로 기록한다.
     촬영 종류가 명시된 경우 지원 목록을 검사한다.
     압축 영상은 pydicom 디코더가 설치된 경우에만 읽을 수 있다.
+    WC/WW 문자열의 비표준 끝 쉼표 하나는 읽을 때 제거한다. 원본 파일은 변경하지 않는다.
     """
     try:
         if hasattr(file, "seek"):
@@ -90,6 +96,9 @@ def load_dicom(file) -> tuple[np.ndarray, dict]:
             "window_center": center, "window_width": width,
             "photometric_interpretation": photo,
             "present_tags": [e.keyword for e in ds if e.keyword and not e.is_empty],
+            "phi_tags": identifier_tags(ds),
+            "sop_instance_uid": str(getattr(ds, "SOPInstanceUID", "") or ""),
+            "burned_in_annotation": str(getattr(ds, "BurnedInAnnotation", "") or ""),
         }
         for key, tag in (("image_position", "ImagePositionPatient"),
                          ("image_orientation", "ImageOrientationPatient"),
