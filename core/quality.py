@@ -15,7 +15,7 @@ QC_THRESHOLDS: dict[str, dict[str, float]] = {
         "brightness_min": 35.0,
         "brightness_max": 220.0,
         "contrast_min": 25.0,
-        "sharpness_min": 50.0,
+        "sharpness_min": 30.0,
     },
     "CT": {
         "brightness_min": 25.0,
@@ -30,7 +30,7 @@ QC_THRESHOLDS: dict[str, dict[str, float]] = {
         "sharpness_min": 40.0,
     },
 }
-QC_THRESHOLDS_VERSION = "v1"
+QC_THRESHOLDS_VERSION = "v2"
 
 
 def thresholds_for(modality: str) -> dict[str, float]:
@@ -103,7 +103,26 @@ def tag_check(header: dict, modality: str = "DX") -> dict:
 
     반환 예: {"missing": ["BodyPartExamined"], "phi_found": ["PatientName"], "issues": [...]}
     """
-    raise NotImplementedError  # TODO(B)
+    from core.dicom_privacy import IDENTIFIERS
+
+    thresholds_for(modality)
+    present = set(header.get("present_tags", []))
+    required = {"Modality", "BodyPartExamined", "Rows", "Columns"}
+    if modality in {"CT", "MR"}:
+        required |= {"PixelSpacing", "SliceThickness", "ImagePositionPatient", "ImageOrientationPatient"}
+    # 등록 시 사용자가 지정한 촬영 종류도 유효한 메타데이터로 취급한다.
+    if header.get("modality"):
+        present.add("Modality")
+    missing = sorted(required - present)
+    phi = sorted(set(header.get("phi_tags", [])) | (present & IDENTIFIERS))
+    # VinDr 샘플의 촬영 부위 누락은 경고로 남긴다. 픽셀 품질 실패와 구분한다.
+    warnings = ["촬영 부위 태그 누락: BodyPartExamined"] if "BodyPartExamined" in missing else []
+    issues = [f"필수 태그 누락: {tag}" for tag in missing if tag != "BodyPartExamined"]
+    if phi:
+        issues.append("개인정보 태그 잔존")
+    if header.get("burned_in_annotation", "").upper() == "YES":
+        issues.append("픽셀 내 문자 포함 표시: 수동 익명화 확인 필요")
+    return {"missing": missing, "phi_found": phi, "issues": issues, "warnings": warnings}
 
 
 def series_check(headers: list[dict], positions: list[float] | None, min_slices: int = 10) -> dict:

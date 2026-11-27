@@ -8,6 +8,7 @@ from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage, generate_uid
 
 from core.dicom_io import InvalidDicomError
+from core.quality import QC_THRESHOLDS_VERSION
 from core.workflow import PermissionDenied
 from services import cases
 from services.cases import RegistrationError, cleanup_orphans, register_case
@@ -26,7 +27,7 @@ class FakeDoc:
     def __init__(self, db, collection, doc_id):
         self.db, self.collection, self.id = db, collection, doc_id
 
-    def get(self):
+    def get(self, transaction=None):  # 실제 Firestore 처럼 트랜잭션 인자를 받는다 (services/access.py)
         if self.db.fail_get:
             raise TimeoutError("read timeout")
         data = self.db.data.get(self.collection, {}).get(self.id)
@@ -128,7 +129,7 @@ def test_register_saves_file_then_db(tmp_path):
     assert image["case_id"] == case_id
     assert image["original_dir"] == f"{case_id}/{image_id}/original"
     assert image["slice_files"] == ["0001.dcm"] and image["num_slices"] == 1
-    assert image["qc"]["thresholds_version"] == "v1" and image["qc"]["series"] is None
+    assert image["qc"]["thresholds_version"] == QC_THRESHOLDS_VERSION and image["qc"]["series"] is None
     history = list(db.data["case_history"].values())
     assert len(history) == 1
     assert history[0]["from_status"] is None and history[0]["to_status"] == case["status"]
@@ -389,3 +390,26 @@ def test_register_without_sop_instance_uid_still_works(tmp_path):
     db = FakeDB()
     register(db, tmp_path, dicom_bytes(SOPInstanceUID=""))
     assert db.data["images"][IDS[1]]["sop_instance_uid"] is None
+
+
+@pytest.mark.parametrize("with_private_name", [False, True])
+def test_registration_accepts_window_tags_with_trailing_commas(tmp_path, with_private_name):
+    import warnings
+
+    extra = {"PatientName": "Synthetic^Patient"} if with_private_name else {}
+    raw = dicom_bytes(WindowCenter=2000.0, WindowWidth=4000.0, **extra)
+    assert raw.count(b"2000.0") == 1 and raw.count(b"4000.0") == 1
+    data = raw.replace(b"2000.0", b"2000, ").replace(b"4000.0", b"4000, ")
+    db = FakeDB()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        result = register(db, tmp_path, data)
+    image = db.data["images"][result["image_id"]]
+    assert image["window_center"] == 2000.0 and image["window_width"] == 4000.0
+    stored = (tmp_path / image["original_dir"] / "0001.dcm").read_bytes()
+    if with_private_name:
+        import pydicom
+        assert "PatientName" not in pydicom.dcmread(BytesIO(stored))
+        assert "PatientName" in result["qc"]["phi_removed"]
+    else:
+        assert stored == data

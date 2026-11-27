@@ -1,14 +1,14 @@
-"""등록할 때 임플란트 자동 탐지와 결과(detections) 조회. 담당: A — docs/firestore.md 3장
+"""임플란트 자동 탐지 결과(detections)와 모델 로딩. 담당: A(등록 연동), B(뷰어 재실행)
 
-- 탐지는 등록(services/cases.register_case) 안에서 품질 점검 바로 뒤에 실행하고,
-  결과는 케이스·영상 문서와 같은 batch 로 detections/{image_id} 에 저장한다 (둘 중 하나만 남는 일이 없다)
-- 모델 파일이 없거나 탐지가 실패해도 등록은 막지 않는다. status 로 구분해 기록한다
+- 등록할 때: register_case(..., detector=load_detector()) 가 품질 점검 뒤 run_detection 을 실행하고,
+  결과를 케이스·영상과 같은 batch 로 detections/{image_id} 에 저장한다 (ui/case_registration.py)
+- 뷰어의 명시적 탐지 재실행·저장은 services.box_review.run_boxes 가 담당한다.
+- run_detection 은 모델 부재·실패를 status 로 구분하고, 등록을 막지 않는다.
     "done": 탐지함 (박스 0개도 done)  /  "no_model": 모델 없음  /  "failed": 탐지 중 오류
 - 결과는 원본 영상 픽셀 좌표라 정답(ground_truth) 박스와 바로 비교할 수 있다
 
-화면(B)에서 쓰는 예:
-    from services.detection import get_detections, load_detector
-    register_case(user, data, db=get_db(), storage_root=..., detector=load_detector())   # 등록
+화면에서 쓰는 예:
+    from services.detection import get_detections
     det = get_detections(user, image_id, db=get_db())    # 조회. None 이면 탐지 기록 없음
     if det and det["status"] == "done":
         for b in det["boxes"]:
@@ -57,14 +57,18 @@ def run_detection(detector, pixels) -> dict:
 def load_detector(model_path: str | Path | None = None):
     """화면용: 모델을 한 번만 불러와 재사용한다 (Streamlit cache). 모델 파일이 없거나 열 수 없으면 None.
 
-    경로: 인자 > secrets.toml [model] path > models/implant.onnx
+    경로: 인자 > secrets.toml [model] path > models/implant.onnx 또는 models/best.onnx
+    프로젝트 밖의 모델은 인자나 비공개 설정으로 명시한다.
     """
     if model_path is None:
         try:
             model_path = st.secrets.get("model", {}).get("path")
         except Exception:  # secrets.toml 이 없어도 기본 경로로 시도
             model_path = None
-    return _open_detector(str(model_path or DEFAULT_MODEL_PATH))
+    if not model_path:
+        candidates = (DEFAULT_MODEL_PATH, DEFAULT_MODEL_PATH.parent / "best.onnx")
+        model_path = next((p for p in candidates if p.is_file()), DEFAULT_MODEL_PATH)
+    return _open_detector(str(model_path))
 
 
 @st.cache_resource(show_spinner="탐지 모델 불러오는 중...")

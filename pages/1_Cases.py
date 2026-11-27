@@ -57,3 +57,11 @@ else:
         "검사일": row.get("study_date") or "미기재",
         "담당자 UID": row.get("assignee_uid") or "미배정",
     } for row in filtered], hide_index=True, use_container_width=True)
+    selected = st.selectbox("열 케이스", [row["case_id"] for row in filtered])
+    if st.button("영상 뷰어에서 열기"):
+        st.session_state.viewer_case_id = selected
+        st.session_state.viewer_source = "등록된 케이스"
+        st.switch_page("pages/2_Viewer.py")
+    if st.button("케이스 검토하기"):
+        st.session_state.review_case_id = selected
+        st.switch_page("pages/3_Review.py")

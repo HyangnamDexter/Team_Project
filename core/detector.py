@@ -88,12 +88,33 @@ def _open_session(model_path):
         raise DetectorError(f"탐지 모델 파일이 없습니다: {model_path}")
     try:
         import onnxruntime as ort
-    except ImportError as exc:
-        raise DetectorError("onnxruntime 이 설치되어 있지 않습니다. pip install -r requirements.txt") from exc
+    except ImportError:
+        return _OpenCVSession(model_path)
     try:
         return ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
     except Exception as exc:
         raise DetectorError("탐지 모델 파일을 열 수 없습니다. ONNX 파일이 맞는지 확인하세요.") from exc
+
+
+class _OpenCVSession:
+    """onnxruntime이 없는 개발 환경에서 고정 640 ONNX를 OpenCV DNN으로 실행한다."""
+
+    def __init__(self, model_path):
+        from threading import Lock
+        try:
+            self.net = cv2.dnn.readNetFromONNX(str(model_path))
+        except cv2.error as exc:
+            raise DetectorError("ONNX 모델을 열 수 없습니다.") from exc
+        self.lock = Lock()
+
+    def get_inputs(self):
+        from types import SimpleNamespace
+        return [SimpleNamespace(name="images", shape=[1, 3, 640, 640])]
+
+    def run(self, outputs, inputs):
+        with self.lock:
+            self.net.setInput(inputs["images"])
+            return [self.net.forward()]
 
 
 def preprocess(pixels: np.ndarray, input_size: tuple[int, int] = (DEFAULT_IMGSZ, DEFAULT_IMGSZ),

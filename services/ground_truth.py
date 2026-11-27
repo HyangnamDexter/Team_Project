@@ -68,7 +68,7 @@ def import_docs(docs: dict[str, dict], *, db) -> int:
     return len(items)
 
 
-def get_ground_truth(user: dict | None, image_id: str, *, db) -> dict | None:
+def get_ground_truth(user: dict | None, image_id: str, *, db, storage_root=None) -> dict | None:
     """등록된 영상(images/{image_id})의 정답. 정답이 없으면 None.
 
     권한: 로그인 필수. 판독의는 본인에게 배정된 케이스의 영상만 (workflow.md 3장 '영상 보기').
@@ -79,6 +79,12 @@ def get_ground_truth(user: dict | None, image_id: str, *, db) -> dict | None:
     except ImageNotFound as exc:
         raise GroundTruthError(str(exc)) from exc
     sop_uid = image.get("sop_instance_uid")
+    if not sop_uid and storage_root is not None:
+        # UID를 기록하지 않았던 이전 등록도 원본 헤더로 정답을 연결한다.
+        import pydicom
+        from services.access import original_path
+        ds = pydicom.dcmread(original_path(image, storage_root), stop_before_pixels=True)
+        sop_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
     if not sop_uid:
         return None  # VinDr 가 아니거나 SOPInstanceUID 가 없는 파일
     gt_snap = db.collection(COLLECTION).document(sop_uid).get()

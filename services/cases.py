@@ -30,6 +30,7 @@ from io import BytesIO
 from pathlib import Path
 
 from core.dicom_io import apply_window, load_dicom
+from core.dicom_privacy import remove_identifiers
 from core.quality import QC_THRESHOLDS_VERSION, image_quality, tag_check
 from core.workflow import QC_FAILED, RADIOGRAPHER, RECEIVED, require_role
 from services.detection import COLLECTION as DETECTIONS, run_detection
@@ -58,22 +59,20 @@ def run_checks(pixels, header: dict) -> dict:
     center, width = header.get("window_center"), header.get("window_width")
     img = apply_window(pixels, center, width) if center is not None and width is not None else apply_window(pixels)
     quality = image_quality(img, modality)
-    try:
-        tags = tag_check(header, modality)
-    except NotImplementedError:  # TODO(B): tag_check 가 구현되면 이 처리는 필요 없다
-        tags = {"missing": [], "phi_found": [], "issues": []}
+    tags = tag_check(header, modality)
     issues = quality["issues"] + tags["issues"]
     return {
-        "result": "fail" if issues else "pass",
+        "result": "fail" if issues else ("warning" if tags["warnings"] else "pass"),
         "modality": modality,
         "sampled_slices": [0],
         "brightness": quality["brightness"],
         "contrast": quality["contrast"],
         "sharpness": quality["sharpness"],
         "missing_tags": sorted(set(header.get("missing_tags", [])) | set(tags["missing"])),
-        "phi_removed": [],  # TODO(B): 개인정보 태그 제거(FR-53) 연결
+        "phi_removed": [],
         "series": None,
         "issues": issues,
+        "warnings": tags["warnings"],
         "thresholds_version": QC_THRESHOLDS_VERSION,
     }
 
@@ -97,9 +96,13 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, mod
     if not data:
         raise RegistrationError("빈 파일은 등록할 수 없습니다.")
     pixels, header = load_dicom(BytesIO(data))
+    data, removed = remove_identifiers(data)
+    if removed:
+        pixels, header = load_dicom(BytesIO(data))
     header = dict(header, **_resolve_modality(header.get("modality"), modality))
 
     qc = run_checks(pixels, header)
+    qc["phi_removed"] = removed
     status = QC_FAILED if qc["issues"] else RECEIVED
     detection = run_detection(detector, pixels)  # 파일을 이미 읽은 김에 탐지. 실패해도 예외 없음
     now = now or datetime.now(timezone.utc)
@@ -147,7 +150,7 @@ def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, detection: d
         "case_id": case_id,
         "modality": header["modality"],
         "series_uid": header.get("series_uid", ""),
-        "sop_instance_uid": _sop_instance_uid(data),  # 영상 고유 번호. VinDr 정답(ground_truth)과 연결하는 키
+        "sop_instance_uid": header.get("sop_instance_uid") or None,  # 영상 고유 번호. VinDr 정답(ground_truth)과 연결하는 키
         "original_dir": f"{case_id}/{image_id}/original",  # 저장소(storage.image_dir) 기준 상대 경로
         "num_slices": 1,
         "slice_files": [SLICE_FILE],
@@ -221,17 +224,6 @@ def _check_written(db, case_id: str, image_id: str, write_token: str) -> str:
     if len(docs) == 2:
         return "ours"
     return "unknown"  # 한쪽만 우리 기록 (batch 는 한꺼번에 반영되므로 정상이라면 생기지 않음)
-
-
-def _sop_instance_uid(data: bytes) -> str | None:
-    """파일의 SOPInstanceUID (영상 고유 번호). 없거나 읽지 못하면 None (등록은 그대로 진행)."""
-    import pydicom
-
-    try:
-        ds = pydicom.dcmread(BytesIO(data), stop_before_pixels=True, specific_tags=["SOPInstanceUID"])
-    except Exception:
-        return None
-    return str(getattr(ds, "SOPInstanceUID", "") or "").strip() or None
 
 
 def _resolve_modality(from_file: str | None, chosen: str | None) -> dict:

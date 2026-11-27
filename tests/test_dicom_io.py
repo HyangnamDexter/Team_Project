@@ -213,3 +213,47 @@ def test_supported_modality_has_no_missing_tag(dicom_file):
     _, header = load_dicom(dicom_file())
     assert header['modality'] == 'DX'
     assert header['missing_tags'] == []
+
+
+def test_trailing_comma_window_tags_in_encoded_dicom(dicom_file):
+    import warnings
+
+    raw = dicom_file(WindowCenter=36483.0, WindowWidth=58567.0).getvalue()
+    assert raw.count(b'36483.0 ') == 1 and raw.count(b'58567.0 ') == 1
+    malformed = raw.replace(b'36483.0 ', b'36483,  ').replace(b'58567.0 ', b'58567,  ')
+    source = BytesIO(malformed)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UserWarning)  # 의도적으로 잘못 만든 DS 태그
+        pixels, header = load_dicom(source)
+    assert header['window_center'] == 36483.0 and header['window_width'] == 58567.0
+    np.testing.assert_array_equal(pixels, [[0, 100], [200, 300]])
+    assert source.getvalue() == malformed
+
+
+@pytest.mark.parametrize('value', ['36483,', ' 36483, ', '36483,\\40000'])
+def test_window_comma_normalization_and_first_window(value):
+    from types import SimpleNamespace
+    from core.dicom_io import _number
+    assert _number(SimpleNamespace(WindowCenter=value), 'WindowCenter') == 36483.0
+
+
+def test_multivalue_window_with_trailing_comma():
+    from types import SimpleNamespace
+    from pydicom.multival import MultiValue
+    from core.dicom_io import _number
+    assert _number(SimpleNamespace(WindowWidth=MultiValue(str, ['58567,', '60000'])), 'WindowWidth') == 58567.0
+
+
+@pytest.mark.parametrize('value', ['36,483', '36483,,', 'nan,', 'inf,', ','])
+def test_window_comma_fix_does_not_accept_other_invalid_numbers(value):
+    from types import SimpleNamespace
+    from core.dicom_io import _number
+    with pytest.raises(ValueError):
+        _number(SimpleNamespace(WindowCenter=value), 'WindowCenter')
+
+
+def test_other_numeric_tags_are_not_silently_repaired():
+    from types import SimpleNamespace
+    from core.dicom_io import _number
+    with pytest.raises(ValueError):
+        _number(SimpleNamespace(InstanceNumber='1,'), 'InstanceNumber')

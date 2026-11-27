@@ -198,3 +198,34 @@ Rescale 적용 후 MONOCHROME1은 관측 범위에서 반전합니다. 반환 �
   본인 계정으로 확인하고 DICOM 10장을 `data/sample/`에 둡니다.
   [RSNA 원 제공자 조건](https://www.rsna.org/-/media/files/rsna/education/ai-resources-and-training/ai-image-challenge/pneumonia-detection-challenge-terms-of-use-and-attribution.pdf)도
   확인하고, 실제 사용 파일·출처·이용 조건을 `docs/data.md`에 기록합니다.
+
+## 뷰어·검토 기능 사용 순서
+
+1. `streamlit run app.py` 실행 후 방사선사 계정으로 케이스를 등록합니다.
+2. 관리자가 검토 화면에서 판독의를 배정하고, 담당 판독의가 **검토 시작**을 누릅니다.
+3. 케이스 목록의 **영상 뷰어에서 열기**를 누르면 등록된 원본과 결과를 비교할 수 있습니다.
+4. 뷰어의 **탐지 박스**에서 정답(초록), 모델(노랑), OpenCV(파랑)를 개별 표시합니다.
+   모델/OpenCV 탐지는 검토 중인 본인 배정 케이스에서 실행·저장할 수 있습니다.
+5. **ROI 선택** 도구로 드래그한 뒤 **ROI 영역만 처리**와 알고리즘을 선택하고 적용합니다.
+   처리 결과는 PNG와 이력으로 저장됩니다. **처리 이력**에서 불러오기·같은 조건 재실행을 할 수 있습니다.
+   같은 영상·WL·알고리즘·파라미터·ROI를 10초 내 다시 실행하면 기존 이력을 재사용합니다.
+6. 검토 화면에서 탐지 박스를 골라 **맞음 / 오검출**을 저장하고, 메모·리포트를 작성합니다.
+   새 탐지를 실행하면 이전 박스의 판정이 새 박스에 잘못 연결되지 않도록 실행 정보를 구분합니다.
+   리포트를 저장한 담당 판독의는 **검토 완료**를 누를 수 있습니다.
+
+모델 경로는 `.streamlit/secrets.toml`의 `[model] path`로 지정합니다. 미지정 시
+`models/implant.onnx`, `models/best.onnx` 순서로 찾습니다. 프로젝트 밖의 파일은 `[model] path`로 명시합니다.
+`conf=0.40`, NMS IoU `0.45`를 사용하며, 자동 윈도우→긴 변 1024→640 Letterbox 전처리를 적용합니다.
+의존성은 `pip install -r requirements.txt`로 설치합니다. ONNX Runtime이 있는 환경은 이를 사용하고,
+미설치 환경은 OpenCV DNN을 사용합니다. 모델 파일과 데이터는 Git에 올리지 않습니다.
+
+초록 정답은 모델 예측이 아니라 VinDr 라벨입니다. `ground_truth`가 비어 있으면
+`python scripts/import_ground_truth.py`로 로컬 CSV를 미리 확인한 뒤,
+관리자가 `--write` 옵션으로 가져올 수 있습니다. 원본 SOPInstanceUID로 연결하며,
+정답이 없는 일반 업로드 영상에는 **정답 데이터 없음**을 표시합니다.
+
+등록 전에 직접 식별 태그·PN·private 태그를 중첩 시퀀스까지 제거하고 태그 이름만 QC에 기록합니다.
+검사일과 영상 UID·픽셀은 보존하므로 전체 DICOM 익명화 프로파일이나 픽셀 내 문자 제거를 의미하지 않습니다.
+`BurnedInAnnotation=YES`는 수동 확인 사유로 남깁니다. 기존 저장 영상은 소급 수정하지 않습니다.
+VinDr 샘플의 `BodyPartExamined` 누락은 QC 경고로 기록하고 접수를 허용합니다.
+픽셀 품질 실패·해결되지 않은 필수 촬영 종류 누락과는 구분합니다.
