@@ -5,5 +5,5 @@ pydicom>=3.0
 firebase-admin>=6.5
 requests>=2.32
 pytest>=8.0
-# 압축된 DICOM(JPEG 등)을 읽어야 하면 주석 해제
-# pylibjpeg[all]
+onnxruntime>=1.18  # 임플란트 탐지 모델 실행 (PyTorch 없이 CPU에서 ONNX 모델 추론)
+pillow>=10  # VinDr 의 JPEG 2000 무손실 DICOM 을 pydicom 이 Pillow(openjpeg)로 푼다. pylibjpeg 는 필요 없음 (tests/test_jpeg2000.py)

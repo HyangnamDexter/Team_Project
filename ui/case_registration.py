@@ -10,6 +10,7 @@ from core.dicom_io import InvalidDicomError
 from core.workflow import PermissionDenied, QC_FAILED
 from services import cases, db
 from services.auth import current_user
+from services.detection import load_detector
 
 
 def queue_registration(data: bytes, modality: str | None) -> None:
@@ -39,6 +40,7 @@ def process_registration(user: dict) -> None:
                 user, pending["data"], db=db.get_db(),
                 storage_root=Path(st.secrets["storage"]["image_dir"]),
                 modality=pending["modality"],
+                detector=load_detector(),  # 등록할 때 임플란트 자동 탐지 (모델 파일이 없으면 None → 탐지 없이 등록)
             )
         completed = dict(st.session_state.get("cases_completed", {}))
         completed[pending["token"]] = result

@@ -27,7 +27,7 @@ flowchart LR
         DB[("Cloud Firestore<br/>asia-northeast3")]
     end
 
-    U -- "HTTP :8501" --> ST
+    U -- "HTTP (8080 공인 포트)" --> ST
     SV -- "REST API<br/>signInWithPassword<br/>(웹 API 키)" --> AU
     SV -- "firebase-admin<br/>(서비스 계정 키)" --> DB
 ```
@@ -223,11 +223,11 @@ sequenceDiagram
 | 항목 | 값 |
 |---|---|
 | 서버 | JCloud Ubuntu VM |
-| 실행 | `streamlit run app.py --server.address 0.0.0.0 --server.port 8501` (백그라운드) |
-| 열 포트 | 22 (SSH), 8501 (Streamlit) |
+| 실행 | systemd 서비스 `pacs` 가 `streamlit run app.py --server.port 8080` 을 실행 (`deploy/pacs.service`) |
+| 열 포트 | JCloud 접속 주소 표의 내부 22 (SSH), 8080 (Streamlit). 8501 은 공인 주소에 연결되지 않음 |
 | 비밀 정보 | 서버에 직접 복사: `.streamlit/secrets.toml`, 서비스 계정 JSON |
-| 영상 저장 | 서버 영구 디스크의 `storage/`. CT·MRI 때문에 여유 용량 수 GB 필요 |
-| 업로드 한도 | `.streamlit/config.toml`의 `maxUploadSize = 500` (MB) |
+| 영상 저장 | 서버 영구 디스크 `/home/ubuntu/pacs-storage` (X-ray 1장 약 5MB, 시연 영상만 등록) |
+| 업로드 한도 | `.streamlit/config.toml`의 `maxUploadSize = 50` (MB, 메모리 2GB 서버 보호) |
 | 업데이트 | `git pull` 후 앱 재시작 |
 
 JCloud 접속이 확인되면 README의 배포 절차를 채운다.

@@ -1,0 +1,19 @@
+# 웹 PACS 자동 실행 설정 (systemd). README "JCloud 배포" 6단계에서 서버에 복사한다.
+# 서버가 재부팅되거나 앱이 죽어도 자동으로 다시 켠다.
+# 사용자 이름(ubuntu)과 폴더(/home/ubuntu/Team_Project)가 다르면 아래 네 곳을 고친다.
+# 포트 8080: JCloud 는 정해진 내부 포트(7777, 80, 443, 3000, 8080)만 공인 주소에 연결한다.
+[Unit]
+Description=Educational Web PACS (Streamlit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Team_Project
+ExecStart=/home/ubuntu/Team_Project/venv/bin/streamlit run app.py --server.address 0.0.0.0 --server.port 8080 --server.headless true --browser.gatherUsageStats false
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

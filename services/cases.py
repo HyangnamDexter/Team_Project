@@ -2,8 +2,8 @@
 
 저장 순서 (파일 먼저, DB 나중 — NFR-04)
 1. 원본을 임시 폴더 <저장소>/<case_id>/<image_id>/original.tmp/0001.dcm 에 쓴다
-2. Firestore 에 cases·images·case_history 문서를 한 번에(batch) 기록한다
-   cases·images 는 create 로 쓴다 → 같은 ID 문서가 이미 있으면 덮어쓰지 않고 실패한다
+2. Firestore 에 cases·images·detections·case_history 문서를 한 번에(batch) 기록한다
+   cases·images·detections 는 create 로 쓴다 → 같은 ID 문서가 이미 있으면 덮어쓰지 않고 실패한다
 3. 성공하면 임시 폴더 이름을 original/ 로 바꾼다
 4. DB 기록에서 예외가 나면 DB를 다시 읽어 결과를 확인한다
    - 우리 기록이 있음(응답만 유실): 성공으로 처리
@@ -16,8 +16,9 @@
     from services.cases import register_case, RegistrationError
     result = register_case(user, uploaded.getvalue(), db=get_db(),
                            storage_root=Path(st.secrets["storage"]["image_dir"]),
-                           modality=selected)  # 파일에 Modality 태그가 없을 때 화면에서 고른 "DX" / "CR"
-    # result = {"case_id", "image_id", "status", "qc"}
+                           modality=selected,  # 파일에 Modality 태그가 없을 때 화면에서 고른 "DX" / "CR"
+                           detector=load_detector())  # services.detection. 모델이 없으면 None → 탐지 없이 등록
+    # result = {"case_id", "image_id", "status", "qc", "detection": {"status", "n_boxes"}}
     # 파일에 Modality 가 없는데 modality 를 안 넘기면 RegistrationError → 화면에서 DX/CR 선택을 보여 주면 된다
 """
 from __future__ import annotations
@@ -32,6 +33,7 @@ from core.dicom_io import apply_window, load_dicom
 from core.dicom_privacy import remove_identifiers
 from core.quality import QC_THRESHOLDS_VERSION, image_quality, tag_check
 from core.workflow import QC_FAILED, RADIOGRAPHER, RECEIVED, require_role
+from services.detection import COLLECTION as DETECTIONS, run_detection
 
 XRAY_MODALITIES = {"CR", "DX"}  # 이번 범위는 X-ray(척추)만
 SLICE_FILE = "0001.dcm"
@@ -76,7 +78,7 @@ def run_checks(pixels, header: dict) -> dict:
 
 
 def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, modality: str | None = None,
-                  now: datetime | None = None, ids: tuple[str, str] | None = None) -> dict:
+                  now: datetime | None = None, ids: tuple[str, str] | None = None, detector=None) -> dict:
     """X-ray DICOM 1장으로 케이스를 등록한다 (T1: 점검 통과 → 접수, T2: 점검 실패 → 재촬영 요청).
 
     - user: 로그인 사용자. 방사선사만 등록할 수 있다 (PermissionDenied)
@@ -84,8 +86,10 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, mod
     - db: Firestore 클라이언트 (services.db.get_db()). 테스트에서는 가짜 DB
     - modality: 파일에 Modality 태그가 없을 때만 쓰는 촬영 종류 ("DX" 또는 "CR", 화면에서 사용자가 선택).
       파일에 태그가 있으면 파일 값을 쓴다. (VinDr-SpineXR 은 Modality 태그가 없다)
+    - detector: 임플란트 탐지 모델 (core.detector.Detector, 화면에서는 services.detection.load_detector()).
+      None 이거나 탐지가 실패해도 등록은 진행하고 detections.status 에 "no_model" / "failed" 로 남긴다
     - now, ids: 테스트용 (시각·ID 고정)
-    반환: {"case_id", "image_id", "status", "qc"}
+    반환: {"case_id", "image_id", "status", "qc", "detection": {"status", "n_boxes"}}
     잘못된 DICOM은 core.dicom_io.InvalidDicomError, X-ray가 아니거나 저장 실패는 RegistrationError
     """
     require_role(user, RADIOGRAPHER)
@@ -100,18 +104,20 @@ def register_case(user: dict | None, data: bytes, *, db, storage_root: Path, mod
     qc = run_checks(pixels, header)
     qc["phi_removed"] = removed
     status = QC_FAILED if qc["issues"] else RECEIVED
+    detection = run_detection(detector, pixels)  # 파일을 이미 읽은 김에 탐지. 실패해도 예외 없음
     now = now or datetime.now(timezone.utc)
     root = Path(storage_root)
 
     for _ in range(1 if ids else MAX_ATTEMPTS):
         case_id, image_id = ids or new_ids(now)
-        if _save_once(db, root, data, header, qc, status, user, now, case_id, image_id) == "ok":
-            return {"case_id": case_id, "image_id": image_id, "status": status, "qc": qc}
+        if _save_once(db, root, data, header, qc, detection, status, user, now, case_id, image_id) == "ok":
+            return {"case_id": case_id, "image_id": image_id, "status": status, "qc": qc,
+                    "detection": {"status": detection["status"], "n_boxes": detection["n_boxes"]}}
         # "conflict": 다른 등록이 같은 ID를 이미 씀 → 새 ID로 다시 시도
     raise RegistrationError("등록 번호가 이미 사용 중입니다. 다시 시도하세요.")
 
 
-def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, status: str, user: dict,
+def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, detection: dict, status: str, user: dict,
                now: datetime, case_id: str, image_id: str) -> str:
     """파일 → DB 저장을 한 번 시도한다. "ok" 또는 "conflict" 를 돌려주고, 그 밖의 실패는 RegistrationError."""
     image_dir = root / case_id / image_id
@@ -144,7 +150,7 @@ def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, status: str,
         "case_id": case_id,
         "modality": header["modality"],
         "series_uid": header.get("series_uid", ""),
-        "sop_instance_uid": header.get("sop_instance_uid") or None,
+        "sop_instance_uid": header.get("sop_instance_uid") or None,  # 영상 고유 번호. VinDr 정답(ground_truth)과 연결하는 키
         "original_dir": f"{case_id}/{image_id}/original",  # 저장소(storage.image_dir) 기준 상대 경로
         "num_slices": 1,
         "slice_files": [SLICE_FILE],
@@ -163,6 +169,13 @@ def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, status: str,
         "uploaded_at": now,
         "write_token": write_token,
     }
+    detection_doc = {
+        **detection,
+        "image_id": image_id,
+        "case_id": case_id,
+        "run_at": now,
+        "write_token": write_token,
+    }
     history_doc = {
         "case_id": case_id,
         "from_status": None,
@@ -177,6 +190,7 @@ def _save_once(db, root: Path, data: bytes, header: dict, qc: dict, status: str,
         batch = db.batch()
         batch.create(db.collection("cases").document(case_id), case_doc)    # 이미 있으면 실패 (덮어쓰기 방지)
         batch.create(db.collection("images").document(image_id), image_doc)
+        batch.create(db.collection(DETECTIONS).document(image_id), detection_doc)
         batch.set(db.collection("case_history").document(), history_doc)   # 자동 ID라 겹치지 않음
         batch.commit()
     except Exception as exc:

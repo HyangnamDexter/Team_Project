@@ -70,7 +70,9 @@ def test_missing_modality_requires_explicit_choice_and_calls_A(page, monkeypatch
     assert len(calls) == 1 and calls[0][0] == TECH and calls[0][1] == data
     assert calls[0][2]["modality"] == "CR"
     assert calls[0][2]["storage_root"] == tmp_path
+    assert "detector" in calls[0][2]  # 등록할 때 자동 탐지 연결 (모델 파일이 없으면 None)
     assert real_db.commits == 1
+    assert next(iter(real_db.data["detections"].values()))["status"] == "no_model"
     assert any("등록됨 (접수)" in msg.value for msg in app.success)
     assert register_button(app).disabled
     app.run()  # 위젯 재실행이 저장을 반복하지 않는다.

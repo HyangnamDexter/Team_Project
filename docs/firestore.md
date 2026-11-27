@@ -21,6 +21,8 @@ erDiagram
     IMAGES ||--o{ PROCESSING_LOGS : "처리"
     CASES ||--o{ NOTES : "메모"
     CASES ||--o{ CASE_HISTORY : "상태 이력"
+    IMAGES }o--o| GROUND_TRUTH : "정답 (sop_instance_uid)"
+    IMAGES ||--o| DETECTIONS : "자동 탐지 (같은 ID)"
 
     USERS {
         string uid PK "Auth UID = 문서 ID"
@@ -75,6 +77,18 @@ erDiagram
         string author_uid FK
         timestamp created_at
     }
+    DETECTIONS {
+        string image_id PK "images 와 같은 ID"
+        string status "done | no_model | failed"
+        array boxes "원본 픽셀 좌표 + score"
+        string model
+    }
+    GROUND_TRUTH {
+        string id PK "VinDr image_id = SOPInstanceUID"
+        string split "train | val | test"
+        string label "implant | normal"
+        array boxes "원본 픽셀 좌표"
+    }
     CASE_HISTORY {
         string history_id PK
         string case_id FK
@@ -116,6 +130,7 @@ erDiagram
 | case_id | string | `CASE-0001` | |
 | modality | string | `CT` | 점검 기준과 윈도우 기본값을 고르는 데 사용 |
 | series_uid | string | `1.2.840...` | DICOM SeriesInstanceUID |
+| sop_instance_uid | string \| null | `0036129847a4...` | DICOM SOPInstanceUID. 정답(`ground_truth`)과 연결하는 키 |
 | original_dir | string | `storage/CASE-0001/IMG-xxx/original` | 원본 단면 파일 폴더, 수정 금지 |
 | num_slices | int | `1` (X-ray) / `180` (CT) | |
 | slice_files | array of string | `["0001.dcm", ...]` | **정렬된 순서**로 저장. 위치(mm)는 `slice_positions` |
@@ -143,6 +158,38 @@ erDiagram
 }
 ```
 X-ray는 `sampled_slices`가 `[0]`, `series`가 null이다.
+
+### `ground_truth/{VinDr image_id}`
+VinDr-SpineXR 라벨 CSV의 임플란트 정답 박스. `scripts/import_ground_truth.py`로 넣는다 (학습 분할 `split.csv`의 642장).
+문서 ID인 VinDr `image_id`는 DICOM `SOPInstanceUID`와 같아서, 등록된 영상의 `images.sop_instance_uid`로 찾는다 (파일 이름과 상관없음).
+읽기는 `services/ground_truth.get_ground_truth` (판독의는 본인 배정 건만).
+
+| 필드 | 타입 | 예시 | 설명 |
+|---|---|---|---|
+| source | string | `VinDr-SpineXR 1.0.0` | |
+| study_id | string | `3b86964d...` | 같은 검사의 영상은 같은 분할에 들어간다 |
+| split | string | `test` | `train` / `val` / `test`. 성능 평가는 `test`만 쓴다 |
+| label | string | `implant` | `implant` / `normal` |
+| class_name | string | `implant` | 탐지 모델의 클래스 이름과 같다 |
+| boxes | array of map | `[{"xmin": 812.0, "ymin": 1450.5, "xmax": 1020.0, "ymax": 1903.0}]` | 원본 영상 픽셀 좌표. 정상 영상은 빈 목록 |
+| n_boxes | int | `2` | |
+
+### `detections/{image_id}`
+등록할 때 임플란트 탐지 모델(`core/detector.py`, ONNX)이 찾은 박스. 문서 ID는 `images`와 같다.
+케이스·영상 문서와 **같은 batch**로 저장해서, 케이스 없이 탐지 결과만 남는 일이 없다.
+모델이 없거나 탐지가 실패해도 등록은 진행하고 `status`로 구분한다. 읽기는 `services/detection.get_detections` (판독의는 본인 배정 건만).
+
+| 필드 | 타입 | 예시 | 설명 |
+|---|---|---|---|
+| image_id / case_id | string | `IMG-...` / `CASE-...` | |
+| status | string | `done` | `done`(박스 0개 포함) / `no_model`(모델 파일 없음) / `failed`(탐지 중 오류) |
+| boxes | array of map | `[{"xmin": 812.0, "ymin": 1450.5, "xmax": 1020.0, "ymax": 1903.0, "score": 0.87, "class_name": "implant"}]` | 원본 영상 픽셀 좌표, 점수 높은 순. `ground_truth.boxes`와 같은 기준 |
+| n_boxes | int | `2` | |
+| model | string \| null | `implant.onnx` | 모델 파일 이름 |
+| conf | number \| null | `0.4` | 이 점수 이상만 저장 (C 의 val 기준 확정값) |
+| elapsed_ms | number \| null | `412.3` | 전처리 + 모델 실행 시간 |
+| error | string \| null | | `failed`일 때 화면용 메시지 |
+| run_at | timestamp | | |
 
 ### `processing_logs/{log_id}`
 | 필드 | 타입 | 예시 |

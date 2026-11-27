@@ -1,11 +1,13 @@
-"""A의 탐지 데이터 형식과 모델 로딩·결과 조회를 재사용한다.
+"""임플란트 자동 탐지 결과(detections)와 모델 로딩. 담당: A(등록 연동), B(뷰어 재실행)
 
-- 뷰어의 명시적 탐지 실행·저장은 services.box_review.run_boxes가 담당한다.
-- A의 등록 연동에서 사용할 수 있는 run_detection은 모델 부재·실패를 status로 구분한다.
+- 등록할 때: register_case(..., detector=load_detector()) 가 품질 점검 뒤 run_detection 을 실행하고,
+  결과를 케이스·영상과 같은 batch 로 detections/{image_id} 에 저장한다 (ui/case_registration.py)
+- 뷰어의 명시적 탐지 재실행·저장은 services.box_review.run_boxes 가 담당한다.
+- run_detection 은 모델 부재·실패를 status 로 구분하고, 등록을 막지 않는다.
     "done": 탐지함 (박스 0개도 done)  /  "no_model": 모델 없음  /  "failed": 탐지 중 오류
 - 결과는 원본 영상 픽셀 좌표라 정답(ground_truth) 박스와 바로 비교할 수 있다
 
-화면(B)에서 쓰는 예:
+화면에서 쓰는 예:
     from services.detection import get_detections
     det = get_detections(user, image_id, db=get_db())    # 조회. None 이면 탐지 기록 없음
     if det and det["status"] == "done":

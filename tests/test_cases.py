@@ -27,7 +27,7 @@ class FakeDoc:
     def __init__(self, db, collection, doc_id):
         self.db, self.collection, self.id = db, collection, doc_id
 
-    def get(self):
+    def get(self, transaction=None):  # 실제 Firestore 처럼 트랜잭션 인자를 받는다 (services/access.py)
         if self.db.fail_get:
             raise TimeoutError("read timeout")
         data = self.db.data.get(self.collection, {}).get(self.id)
@@ -376,6 +376,20 @@ def test_file_modality_wins_over_choice(tmp_path):
                   modality="DX", now=NOW, ids=IDS)
     image = db.data["images"][IDS[1]]
     assert image["modality"] == "CR" and image["modality_source"] == "file"
+
+
+# ---------------------------------------------------------------- 정답(ground_truth) 연결 키
+def test_register_saves_sop_instance_uid(tmp_path):
+    # VinDr 는 SOPInstanceUID 가 image_id 와 같다 → 정답 문서와 이것으로 연결한다
+    db = FakeDB()
+    register(db, tmp_path, dicom_bytes(SOPInstanceUID="0036129847a4f5c1e9fda9a1e1d2b3c4"))
+    assert db.data["images"][IDS[1]]["sop_instance_uid"] == "0036129847a4f5c1e9fda9a1e1d2b3c4"
+
+
+def test_register_without_sop_instance_uid_still_works(tmp_path):
+    db = FakeDB()
+    register(db, tmp_path, dicom_bytes(SOPInstanceUID=""))
+    assert db.data["images"][IDS[1]]["sop_instance_uid"] is None
 
 
 @pytest.mark.parametrize("with_private_name", [False, True])
