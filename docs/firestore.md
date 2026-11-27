@@ -186,7 +186,7 @@ VinDr-SpineXR 라벨 CSV의 임플란트 정답 박스. `scripts/import_ground_t
 | boxes | array of map | `[{"xmin": 812.0, "ymin": 1450.5, "xmax": 1020.0, "ymax": 1903.0, "score": 0.87, "class_name": "implant"}]` | 원본 영상 픽셀 좌표, 점수 높은 순. `ground_truth.boxes`와 같은 기준 |
 | n_boxes | int | `2` | |
 | model | string \| null | `implant.onnx` | 모델 파일 이름 |
-| conf | number \| null | `0.3` | 이 점수 이상만 저장 |
+| conf | number \| null | `0.4` | 이 점수 이상만 저장 (C 의 val 기준 확정값) |
 | elapsed_ms | number \| null | `412.3` | 전처리 + 모델 실행 시간 |
 | error | string \| null | | `failed`일 때 화면용 메시지 |
 | run_at | timestamp | | |

@@ -10,7 +10,8 @@
     python scripts/check_detection.py --model models/best.onnx --conf 0.25
 
 모델 파일이 없으면 정답만 그린다 (영상·라벨 연결 확인용).
-숫자는 IoU 0.5 이상을 맞힌 것으로 보는 1:1 매칭 (C 실험의 엄격 기준과 같음).
+숫자는 C 의 평가 코드와 같은 규칙: 점수 높은 예측부터 가장 많이 겹치는 정답과 IoU 0.5 이상이면 1:1 로 맞힘.
+라벨 CSV에 없는 영상은 정상(정답 0개)으로 세지 않고 평가에서 뺀다. 정상 오탐률은 "No finding" 영상만 센다.
 """
 from __future__ import annotations
 
@@ -42,22 +43,22 @@ def iou(a: dict, b: dict) -> float:
 
 
 def match(preds: list[dict], gts: list[dict], threshold: float = IOU_MATCH) -> dict:
-    """점수 높은 예측부터 아직 안 맞힌 정답 중 IoU 가 가장 큰 것과 짝짓는다 (1:1).
+    """C 의 평가 코드와 같은 규칙 (scripts/eval_experiments.py 의 iou50, 학습 노트북의 YOLO 평가).
 
+    점수 높은 예측부터, **모든 정답 중** IoU 가 가장 큰 정답 하나를 고른다 (같으면 앞 번호).
+    그 IoU 가 threshold 이상이고 아직 안 맞힌 정답이면 맞힘, 아니면 오검출이다.
+    가장 많이 겹치는 정답을 이미 다른 예측이 맞혔다면, 다른 정답과 threshold 이상 겹쳐도 오검출로 센다.
     반환: {"tp", "fp", "fn", "matched": [(pred 번호, gt 번호, iou)]}
     """
     used, matched = set(), []
     for pi in sorted(range(len(preds)), key=lambda i: -preds[i].get("score", 0)):
-        best, best_iou = None, threshold
-        for gi, gt in enumerate(gts):
-            if gi in used:
-                continue
-            v = iou(preds[pi], gt)
-            if v >= best_iou:
-                best, best_iou = gi, v
-        if best is not None:
+        if not gts:
+            continue
+        ious = [iou(preds[pi], gt) for gt in gts]
+        best = max(range(len(gts)), key=lambda gi: ious[gi])  # 같은 값이면 앞 번호 (np.argmax 와 같음)
+        if ious[best] >= threshold and best not in used:
             used.add(best)
-            matched.append((pi, best, round(best_iou, 3)))
+            matched.append((pi, best, round(ious[best], 3)))
     tp = len(matched)
     return {"tp": tp, "fp": len(preds) - tp, "fn": len(gts) - tp, "matched": matched}
 
@@ -95,12 +96,19 @@ def draw(pixels, gts: list[dict], preds: list[dict], title: str, max_size: int =
 
 # ---------------------------------------------------------------- 실행
 def ground_truth_boxes(src: Path) -> dict[str, list[dict]]:
+    """라벨 CSV → {VinDr image_id: {"label": implant|normal|other, "boxes": [...]}}.
+
+    라벨에 없는 영상은 이 dict 에 없다 (정답 없음). 정상 영상은 boxes 가 빈 목록으로 들어 있다 (정답 0개).
+    """
+    paths = [src / "annotations" / name for name in ("train.csv", "test.csv")]
+    if not any(p.exists() for p in paths):
+        sys.exit(f"라벨 CSV가 없습니다: {src / 'annotations'} (train.csv, test.csv). 정답 없이는 평가할 수 없습니다.")
     images = {}
-    for name in ("train.csv", "test.csv"):
-        path = src / "annotations" / name
+    for path in paths:
         if path.exists():
             images.update(collect_images(read_rows(path)))
-    return {i: [{"xmin": x0, "ymin": y0, "xmax": x1, "ymax": y1} for x0, y0, x1, y1 in v["boxes"]]
+    return {i: {"label": v["label"],
+                "boxes": [{"xmin": x0, "ymin": y0, "xmax": x1, "ymax": y1} for x0, y0, x1, y1 in v["boxes"]]}
             for i, v in images.items()}
 
 
@@ -153,11 +161,15 @@ def main(argv: list[str] | None = None) -> dict:
     gt_all = ground_truth_boxes(args.src)
     args.out.mkdir(parents=True, exist_ok=True)
 
-    total = {"tp": 0, "fp": 0, "fn": 0, "images": 0, "normal": 0, "normal_with_fp": 0}
+    total = {"tp": 0, "fp": 0, "fn": 0, "images": 0, "normal": 0, "normal_with_fp": 0, "no_label": 0}
     times = []
     for f in files:
         uid = sop_uid(f)
-        gts = gt_all.get(uid, [])
+        if uid not in gt_all:  # 정답 없음 ≠ 정상(정답 0개). 평가에서 빼고 알린다
+            total["no_label"] += 1
+            print(f"{uid[:12]}  라벨 CSV에 없는 영상 → 평가에서 제외")
+            continue
+        label, gts = gt_all[uid]["label"], gt_all[uid]["boxes"]
         pixels, _ = load_dicom(str(f))
         if detector:
             start = time.perf_counter()
@@ -169,7 +181,7 @@ def main(argv: list[str] | None = None) -> dict:
         total["images"] += 1
         for k in ("tp", "fp", "fn"):
             total[k] += m[k]
-        if not gts:
+        if label == "normal":  # "No finding" 영상만 정상 오탐률에 넣는다 (다른 소견만 있는 영상은 제외)
             total["normal"] += 1
             total["normal_with_fp"] += bool(preds)
         title = f"GT {len(gts)} / pred {len(preds)} / TP {m['tp']}" if detector else f"GT {len(gts)} (no model)"
@@ -177,6 +189,10 @@ def main(argv: list[str] | None = None) -> dict:
         print(f"{uid[:12]}  정답 {len(gts)}개  예측 {len(preds)}개  맞힘 {m['tp']}  "
               f"오검출 {m['fp']}  놓침 {m['fn']}")
 
+    if total["no_label"]:
+        print(f"\n라벨 CSV에 없어 평가에서 뺀 영상: {total['no_label']}장")
+    if not total["images"]:
+        sys.exit("평가할 수 있는 영상이 없습니다. 라벨 CSV에 있는 VinDr 영상인지 확인하세요.")
     print(f"\n그림 {total['images']}장 저장: {args.out}  (초록 = 정답, 빨강 = 모델)")
     if detector:
         tp, fp, fn = total["tp"], total["fp"], total["fn"]
