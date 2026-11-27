@@ -55,7 +55,8 @@ def run_detection(detector, pixels) -> dict:
 def load_detector(model_path: str | Path | None = None):
     """화면용: 모델을 한 번만 불러와 재사용한다 (Streamlit cache). 모델 파일이 없거나 열 수 없으면 None.
 
-    경로: 인자 > secrets.toml [model] path > models/implant.onnx
+    경로: 인자 > secrets.toml [model] path > models/implant.onnx 또는 models/best.onnx
+    프로젝트 밖의 모델은 인자나 비공개 설정으로 명시한다.
     """
     if model_path is None:
         try:
@@ -63,8 +64,7 @@ def load_detector(model_path: str | Path | None = None):
         except Exception:  # secrets.toml 이 없어도 기본 경로로 시도
             model_path = None
     if not model_path:
-        candidates = (DEFAULT_MODEL_PATH, DEFAULT_MODEL_PATH.parent / "best.onnx",
-                      DEFAULT_MODEL_PATH.parents[1].parent / "best.onnx")
+        candidates = (DEFAULT_MODEL_PATH, DEFAULT_MODEL_PATH.parent / "best.onnx")
         model_path = next((p for p in candidates if p.is_file()), DEFAULT_MODEL_PATH)
     return _open_detector(str(model_path))
 

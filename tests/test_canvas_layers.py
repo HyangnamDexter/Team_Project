@@ -11,7 +11,7 @@ def test_canvas_boxes_follow_zoom_and_pan():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js가 없는 환경")
-    html = (Path(__file__).resolve().parents[1] / "ui/dicom_canvas/index.html").read_text()
+    html = (Path(__file__).resolve().parents[1] / "ui/dicom_canvas/index.html").read_text(encoding="utf-8")
     script = html.split("<script>")[1].split("</script>")[0]
     harness = r'''
 const vm = require('vm');

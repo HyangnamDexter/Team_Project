@@ -105,9 +105,9 @@ Rescale 적용 후 MONOCHROME1은 관측 범위에서 반전합니다. 반환 �
    리포트를 저장한 담당 판독의는 **검토 완료**를 누를 수 있습니다.
 
 모델 경로는 `.streamlit/secrets.toml`의 `[model] path`로 지정합니다. 미지정 시
-`models/implant.onnx`, `models/best.onnx`, 저장소 상위의 `best.onnx` 순서로 찾습니다.
+`models/implant.onnx`, `models/best.onnx` 순서로 찾습니다. 프로젝트 밖의 파일은 `[model] path`로 명시합니다.
 `conf=0.40`, NMS IoU `0.45`를 사용하며, 자동 윈도우→긴 변 1024→640 Letterbox 전처리를 적용합니다.
-서버에 ONNX Runtime을 설치하려면 `pip install -r requirements-onnx.txt`를 실행합니다.
+의존성은 `pip install -r requirements.txt`로 설치합니다. ONNX Runtime이 있는 환경은 이를 사용하고,
 미설치 환경은 OpenCV DNN을 사용합니다. 모델 파일과 데이터는 Git에 올리지 않습니다.
 
 초록 정답은 모델 예측이 아니라 VinDr 라벨입니다. `ground_truth`가 비어 있으면

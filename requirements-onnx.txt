@@ -1,3 +1,0 @@
--r requirements.txt
-# 서버에서 ONNX Runtime을 사용할 때 설치. 미설치 개발 환경은 OpenCV DNN으로 실행.
-onnxruntime>=1.20
