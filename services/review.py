@@ -41,6 +41,12 @@ ACTION_LABELS = {"assign": "배정", "reassign": "재배정", "start": "검토 �
                  "complete": "검토 완료", "rereview": "재검토 지시"}
 
 
+def done_message(action_label: str, result: dict) -> str:
+    """상태 변경 성공 안내. "검토 완료"처럼 이미 '완료'로 끝나는 동작은 '완료'를 다시 붙이지 않는다."""
+    done = action_label if action_label.endswith("완료") else f"{action_label} 완료"
+    return f"{done}: {result['from_status']} → {result['status']}"
+
+
 class ReviewError(Exception):
     """조건이 맞지 않아 상태를 바꿀 수 없음 (사유 없음, 리포트 없음 등). 메시지는 화면에 그대로 보여 준다."""
 
