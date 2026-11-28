@@ -215,3 +215,47 @@ def test_previous_file_error_hidden_for_new_or_completed_file(page, monkeypatch)
     app.run()
     assert not app.error
     assert save.call_count == 2
+
+
+@pytest.mark.parametrize("detection,message,warning", [
+    ({"status": "done", "n_boxes": 2}, "임플란트 의심 박스 2개", False),
+    ({"status": "done", "n_boxes": 0}, "임플란트 의심 박스 없음", False),
+    ({"status": "no_model", "n_boxes": 0}, "탐지 모델이 없어 탐지하지 않았습니다", True),
+    ({"status": "failed", "n_boxes": 0}, "자동 탐지에 실패했습니다", True),
+])
+def test_registration_displays_each_detection_outcome_without_repeating_registration(page, monkeypatch, detection, message, warning):
+    app, selected, _ = page
+    selected["file"] = Upload(dicom_bytes())
+    save = Mock(return_value={"case_id": "CASE-ONE", "status": "접수", "qc": {},
+                              "detection": {**detection, "error": "private server detail"}})
+    monkeypatch.setattr(cases, "register_case", save)
+    app.run()
+    register_button(app).click().run()
+    assert not app.exception
+    messages = app.warning if warning else app.info
+    assert any(message in item.value for item in messages)
+    assert all("private server detail" not in item.value for item in [*app.warning, *app.info])
+    app.run()
+    assert save.call_count == 1 and register_button(app).disabled
+
+
+def test_registration_rejects_files_above_50mb_before_reading_content(page, monkeypatch):
+    from core.settings import MAX_UPLOAD_BYTES
+
+    class Oversized(Upload):
+        @property
+        def size(self):
+            return MAX_UPLOAD_BYTES + 1
+
+        def getvalue(self):
+            pytest.fail("크기 제한을 넘긴 파일의 내용을 읽으면 안 됨")
+
+    app, selected, _ = page
+    selected["file"] = Oversized(b"unused")
+    save = Mock()
+    monkeypatch.setattr(cases, "register_case", save)
+    app.run()
+    assert not app.exception
+    assert any("50MB 이하" in error.value for error in app.error)
+    assert register_button(app).disabled
+    save.assert_not_called()

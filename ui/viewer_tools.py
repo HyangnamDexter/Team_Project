@@ -6,6 +6,7 @@ from core.algorithms import roi_stats
 from core.workflow import IN_REVIEW, READER, ROLE_LABELS
 from services import box_review, processing
 from services.ground_truth import get_ground_truth
+from ui.display import format_kst
 
 COLORS = {"gt": "#30e878", "model": "#ffe34d", "opencv": "#459dff"}
 
@@ -50,7 +51,7 @@ def render_history(user, image_id, case, db, root, token):
             return
         by_id = {r["log_id"]: r for r in logs}
         picked = st.selectbox("저장된 처리", list(by_id), key="history_" + image_id,
-                              format_func=lambda i: f"{by_id[i]['algorithm']} · {by_id[i]['run_at']}")
+                              format_func=lambda i: f"{by_id[i]['algorithm']} · {format_kst(by_id[i]['run_at'])}")
         load = st.button("결과 불러오기", key="load_processing")
         replay = st.button("같은 조건으로 재실행", disabled=not can_edit(user, case), key="replay_processing")
         if load or replay:

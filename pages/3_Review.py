@@ -4,6 +4,7 @@ import streamlit as st
 from core.workflow import PermissionDenied
 from services.auth import require_login
 from services.db import get_db
+from services.case_people import case_user_labels
 from ui.review_tools import render_review_tools
 from services.review import (
     ACTION_LABELS, ReviewError, assign_reader, available_actions, complete_review, list_readers,
@@ -37,6 +38,14 @@ case_id = st.selectbox("케이스", ids, index=ids.index(picked) if picked in by
                        format_func=lambda i: f"{i} · {by_id[i].get('status', '?')}")
 st.session_state.review_case_id = case_id
 case = by_id[case_id]
+try:
+    user_labels = case_user_labels(user, case_id, db=db)
+except PermissionDenied as exc:
+    st.error(str(exc))
+    st.stop()
+except Exception:
+    user_labels = {user["uid"]: user.get("email") or "알 수 없는 사용자"}
+    st.warning("케이스 참여자 정보를 불러오지 못했습니다. 연결을 확인하세요.")
 readers = list_readers(user, db=db) if user["role"] == "manager" else []
 email_of = {r["uid"]: r["email"] for r in readers}
 
@@ -44,9 +53,7 @@ email_of = {r["uid"]: r["email"] for r in readers}
 def assignee_text(uid):
     if not uid:
         return "없음"
-    if uid == user["uid"]:
-        return "나"
-    return email_of.get(uid, uid)
+    return user_labels.get(uid, "알 수 없는 사용자")
 
 
 c1, c2, c3 = st.columns(3)
@@ -95,6 +102,6 @@ for action in actions:
             run(label, complete_review)
 
 try:
-    render_review_tools(user, case_id, case, db)
+    render_review_tools(user, case_id, case, db, user_labels=user_labels)
 except Exception as exc:
     st.error(str(exc) if isinstance(exc, PermissionDenied) else "검토 자료를 불러오지 못했습니다. 연결을 확인하세요.")

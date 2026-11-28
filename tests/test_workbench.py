@@ -156,6 +156,15 @@ def test_manager_only_creates_memo_not_report(workbench):
         notes.save_note(ADMIN, "C1", "리포트", "report", db=db)
 
 
+@pytest.mark.parametrize("kind,title", [("memo", "메모"), ("report", "리포트")])
+def test_note_history_distinguishes_memo_and_report_creation_and_edit(workbench, kind, title):
+    db, _ = workbench
+    saved = notes.save_note(READER1, "C1", "처음 내용", kind, db=db)
+    notes.save_note(READER1, "C1", "수정 내용", kind, db=db,
+                    note_id=saved["note_id"], expected_content="처음 내용")
+    assert [row["reason"] for row in db.history()] == [f"{title} 작성", f"{title} 수정"]
+
+
 class FakeDetector:
     def detect(self, pixels):
         return {"boxes": [{"xmin": 2, "ymin": 3, "xmax": 20, "ymax": 25, "score": .8}],

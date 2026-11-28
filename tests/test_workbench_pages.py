@@ -102,6 +102,72 @@ def test_box_verdict_form_persists_and_reloads(screen):
     assert any("저장된 판정: 오검출" in c.value for c in app.caption)
 
 
+def test_box_verdict_label_refresh_keeps_second_box_selected(screen):
+    open_page, database, _ = screen
+    database.data["detections"]["I1"]["boxes"].append(
+        {"xmin": 30, "ymin": 32, "xmax": 40, "ymax": 42, "score": .7})
+    app = open_page("pages/3_Review.py")
+    box = next(s for s in app.selectbox if s.label == "탐지 박스")
+    box.set_value(1).run()
+    old_key = next(s for s in app.selectbox if s.label == "탐지 박스").key
+    next(r for r in app.radio if r.label == "판정").set_value("오검출")
+    button(app, "박스 검토 저장").click().run()
+    assert not app.exception and not app.error
+    box = next(s for s in app.selectbox if s.label == "탐지 박스")
+    assert box.key != old_key and box.value == 1
+    assert box.options == ["박스 1 · 미검토", "박스 2 · 오검출"]
+    app.run()
+    assert next(s for s in app.selectbox if s.label == "탐지 박스").value == 1
+    # 같은 박스 판정을 다시 바꿔도 라벨과 선택이 함께 갱신된다.
+    next(r for r in app.radio if r.label == "판정").set_value("맞음")
+    button(app, "박스 검토 저장").click().run()
+    box = next(s for s in app.selectbox if s.label == "탐지 박스")
+    assert not app.exception and box.value == 1
+    assert box.options[1] == "박스 2 · 맞음"
+
+
+def test_case_participants_and_times_are_human_readable_for_non_manager(screen):
+    from datetime import datetime, timezone
+    from test_review import TECH
+
+    open_page, database, _ = screen
+    when = datetime(2026, 11, 28, 4, 6, 15, 836185, tzinfo=timezone.utc)
+    database.data["notes"]["N1"] = {"case_id": "C1", "type": "memo", "content": "표시 확인",
+        "author_uid": "m1", "created_at": when,
+        "edits": [{"before": "이전 메모", "by": "m1", "at": when}]}
+    database.data["case_history"]["H1"] = {"case_id": "C1", "actor_uid": "t1", "at": when,
+        "from_status": "접수", "to_status": "검토 중", "reason": "표시 확인"}
+    app = open_page("pages/3_Review.py", user=TECH)
+    assert not app.exception and not app.error
+    assert next(m for m in app.metric if m.label == "담당 판독의").value == "r1@test.com"
+    assert any("m1@test.com · 2026-11-28 13:06:15" in e.label for e in app.expander)
+    assert any("2026-11-28 13:06:15" in t.value and "t1@test.com" in t.value for t in app.text)
+    assert any("이전 내용 · 2026-11-28 13:06:15 · m1@test.com" == c.value for c in app.caption)
+
+
+def test_missing_original_shows_actionable_message_without_local_path(screen, workbench):
+    open_page, _, _ = screen
+    _, root = workbench
+    (root / "C1/I1/original/0001.dcm").unlink()
+    app = open_page()
+    assert any("원본 파일이 이 서버에 없습니다. 다른 환경에서 등록된 케이스일 수 있습니다." in e.value
+               for e in app.error)
+    assert all(str(root) not in e.value for e in app.error)
+
+
+def test_other_original_read_errors_keep_generic_message(screen, monkeypatch):
+    from services import access
+
+    open_page, _, _ = screen
+
+    def denied(*args):
+        raise PermissionError("private path and server detail")
+
+    monkeypatch.setattr(access, "original_path", denied)
+    app = open_page()
+    assert [e.value for e in app.error] == ["등록 영상을 불러오지 못했습니다."]
+
+
 def test_technician_can_view_but_cannot_run_algorithms_or_detection(screen):
     open_page, _, _ = screen
     app = open_page(user=TECH)

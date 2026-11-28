@@ -7,6 +7,7 @@ import pydicom
 import streamlit as st
 
 from core.dicom_io import InvalidDicomError
+from core.settings import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 from core.workflow import PermissionDenied, QC_FAILED
 from services import cases, db
 from services.auth import current_user
@@ -62,8 +63,8 @@ def render_registration(user: dict) -> None:
                                   accept_multiple_files=False, key="cases_upload")
         data, modality, valid = b"", None, False
         if upload is not None:
-            if upload.size > 500 * 1024 * 1024:
-                st.error("파일은 500MB 이하로 선택하세요.")
+            if upload.size > MAX_UPLOAD_BYTES:
+                st.error(f"파일은 {MAX_UPLOAD_MB}MB 이하로 선택하세요.")
             else:
                 data = upload.getvalue()
                 try:
@@ -98,6 +99,14 @@ def render_registration(user: dict) -> None:
                 st.success(f"{result['case_id']} 등록됨 ({result['status']})")
             for warning in result.get("qc", {}).get("warnings", []):
                 st.warning(warning)
+            detection = result.get("detection") or {}
+            if detection.get("status") == "done":
+                count = detection.get("n_boxes", 0)
+                st.info(f"임플란트 의심 박스 {count}개" if count else "임플란트 의심 박스 없음")
+            elif detection.get("status") == "no_model":
+                st.warning("탐지 모델이 없어 탐지하지 않았습니다.")
+            elif detection.get("status") == "failed":
+                st.warning("자동 탐지에 실패했습니다. 등록은 완료됐으며 뷰어에서 다시 실행할 수 있습니다.")
             st.caption("이미 등록한 파일입니다. 다른 영상을 선택하면 새로 등록할 수 있습니다.")
         error = st.session_state.get("cases_registration_error")
         if error and error[0] == token:
