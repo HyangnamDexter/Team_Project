@@ -202,7 +202,7 @@ with controls:
     width = st.number_input("윈도우 폭 (대비)", min_value=1.0, key="viewer_width", step=1.0)
     tools = ["확대·이동", "길이 측정", "ROI 선택"]
     if user["role"] == READER:
-        tools += ["펜", "지우개"]
+        tools += ["펜", "지우개", "펜 선택"]
     if st.session_state.get("viewer_tool") not in tools:
         st.session_state.viewer_tool = tools[0]
     tool = st.radio("마우스 도구", tools, key="viewer_tool",
@@ -215,16 +215,25 @@ with controls:
         st.caption("영상 위를 드래그해서 처리할 사각형 영역을 선택하세요.")
     elif tool == "펜":
         st.caption("오른쪽 영상 위에 마우스·손가락·펜으로 그리세요.")
+    elif tool == "펜 선택":
+        st.caption("선을 클릭해 선택하고 드래그해 이동하세요. Shift+클릭으로 선택을 추가·해제합니다.")
     else:
         st.caption("그림을 문지르면 닿은 선 전체가 지워집니다. 박스·측정선은 지우지 않습니다.")
     if user["role"] == READER:
-        with st.expander("펜 설정", expanded=tool in {"펜", "지우개"}):
+        with st.expander("펜 설정", expanded=tool in {"펜", "지우개", "펜 선택"}):
             color = st.selectbox("펜 색", ["빨강", "노랑", "초록"], key="viewer_pen_color")
             pen_color = {"빨강": "#ff4d4f", "노랑": "#ffe34d", "초록": "#30e878"}[color]
             pen_width = st.select_slider("펜 굵기", [2, 4, 8], value=4, key="viewer_pen_width",
                                         format_func=lambda n: {2: "가늘게", 4: "보통", 8: "굵게"}[n])
             st.button("펜 되돌리기", key="pen_undo", on_click=pen_command, args=("undo",))
+            st.button("펜 다시 실행", key="pen_redo", on_click=pen_command, args=("redo",))
             st.button("그림 전체 지우기", key="pen_clear", on_click=pen_command, args=("clear",))
+            st.caption("오른쪽 영상에 포커스가 있을 때: Ctrl+Z 되돌리기 · Ctrl+Y / Ctrl+Shift+Z 다시 실행 · "
+                       "Ctrl+A 전체 선택 · Ctrl+C 복사 · Ctrl+V 붙여넣기. Mac에서는 ⌘ 키를 사용하세요.")
+            st.caption("펜·펜 선택 도구에서 선택한 그림을 드래그로 이동하고, Delete로 삭제, Esc로 선택 해제할 수 있습니다. "
+                       "복사·붙여넣기는 현재 영상의 펜 그림에만 적용됩니다.")
+            st.caption("펜·펜 선택 도구에서 우클릭한 채 드래그하면 사각형에 닿는 선을 한 번에 선택합니다. "
+                       "Shift를 누르면 기존 선택에 추가합니다.")
             st.caption("임시 그림입니다. 원본에는 저장하지 않으며, 다른 영상으로 바꾸면 지워집니다.")
     st.button("측정 지우기", on_click=clear_measurement)
     zoom = st.slider("확대 배율", 1.0, 4.0, step=0.1, key="viewer_zoom")
@@ -269,11 +278,13 @@ with display:
         st.subheader(result_label)
         image_canvas(image, rows=image.shape[0], cols=image.shape[1],
                      crop=[left, top, crop_width, crop_height], zoom=zoom,
-                     mode={"길이 측정": "measure", "ROI 선택": "roi", "펜": "pen", "지우개": "eraser"}.get(tool, "navigate"),
+                     mode={"길이 측정": "measure", "ROI 선택": "roi", "펜": "pen", "지우개": "eraser",
+                           "펜 선택": "ink_select"}.get(tool, "navigate"),
                      points=points, label=label, token=token,
                      epoch=st.session_state.viewer_epoch, read_only=False, max_height=420,
                      boxes=boxes, roi=roi, key="viewer_canvas", default=None,
                      drawing_token=f"{user['uid']}:{token}", pen_color=pen_color, pen_width=pen_width,
+                     ink_enabled=user["role"] == READER,
                      pen_command=st.session_state.get("viewer_pen_command"))
         st.caption(f"{zoom:.1f}배 · 표시 영역 x={left}, y={top}, "
                    f"너비={crop_width}, 높이={crop_height}")
