@@ -102,6 +102,29 @@ def test_box_verdict_form_persists_and_reloads(screen):
     assert any("저장된 판정: 오검출" in c.value for c in app.caption)
 
 
+def test_missing_original_shows_actionable_message_without_local_path(screen, workbench):
+    open_page, _, _ = screen
+    _, root = workbench
+    (root / "C1/I1/original/0001.dcm").unlink()
+    app = open_page()
+    assert any("원본 파일이 이 서버에 없습니다. 다른 환경에서 등록된 케이스일 수 있습니다." in e.value
+               for e in app.error)
+    assert all(str(root) not in e.value for e in app.error)
+
+
+def test_other_original_read_errors_keep_generic_message(screen, monkeypatch):
+    from services import access
+
+    open_page, _, _ = screen
+
+    def denied(*args):
+        raise PermissionError("private path and server detail")
+
+    monkeypatch.setattr(access, "original_path", denied)
+    app = open_page()
+    assert [e.value for e in app.error] == ["등록 영상을 불러오지 못했습니다."]
+
+
 def test_technician_can_view_but_cannot_run_algorithms_or_detection(screen):
     open_page, _, _ = screen
     app = open_page(user=TECH)

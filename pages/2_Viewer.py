@@ -120,6 +120,9 @@ with st.sidebar:
             file = original_path(registered_image, storage_root)
             file_id = (user["uid"], registered_image_id, file.stat().st_mtime_ns)
             filename = f"{case_id} / {registered_image_id}"
+        except FileNotFoundError:
+            st.error("원본 파일이 이 서버에 없습니다. 다른 환경에서 등록된 케이스일 수 있습니다.")
+            st.stop()
         except Exception as exc:
             st.error(str(exc) if isinstance(exc, (PermissionDenied, ValueError)) else "등록 영상을 불러오지 못했습니다.")
             st.stop()
