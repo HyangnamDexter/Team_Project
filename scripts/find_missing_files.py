@@ -42,16 +42,34 @@ def file_exists(image: dict, storage_root: Path) -> bool:
 
 
 def find_missing(db, storage_root: Path) -> list[dict]:
-    """원본 파일이 하나라도 없는 케이스 (영상 기록이 없는 케이스 포함). 오래된 순."""
+    """원본 파일이 하나라도 없는 케이스 (영상 기록이 없는 케이스 포함). 오래된 순.
+
+    deletable: 모든 영상의 파일이 없을 때만 True. 파일이 하나라도 남아 있으면 지우지 않는다 (남은 영상까지 잃지 않도록).
+    """
     missing = []
     for snap in db.collection("cases").stream():
         case = snap.to_dict() or {}
-        images = [s.to_dict() or {} for s in _where(db, "images", "case_id", snap.id)]
-        lost = sum(not file_exists(image, storage_root) for image in images)
+        images = {s.id: s.to_dict() or {} for s in _where(db, "images", "case_id", snap.id)}
+        lost = sorted(i for i, image in images.items() if not file_exists(image, storage_root))
         if lost or not images:
             missing.append({"case_id": snap.id, "status": case.get("status"), "created_at": case.get("created_at"),
-                            "created_by": case.get("created_by"), "images": len(images), "missing": lost})
+                            "created_by": case.get("created_by"), "images": len(images), "missing": len(lost),
+                            "image_ids": sorted(images), "deletable": len(lost) == len(images)})
     return sorted(missing, key=lambda c: str(c["created_at"] or ""))
+
+
+def recheck(db, storage_root: Path, before: dict[str, dict], case_ids: list[str]) -> list[str]:
+    """지우기 직전 재검사. 처음 목록과 달라진 케이스 번호를 돌려준다 (비어 있으면 그대로 지워도 됨).
+
+    저장 폴더가 사라졌으면 모든 케이스가 '파일 없음'으로 보이므로 검사 자체를 멈춘다.
+    """
+    if not Path(storage_root).is_dir():
+        sys.exit(f"영상 저장 폴더 {storage_root} 가 사라져 아무것도 지우지 않았습니다. 폴더를 확인하세요.")
+    now = {c["case_id"]: c for c in find_missing(db, Path(storage_root))}
+    return [i for i in case_ids
+            if i not in now                                       # 파일이 모두 복구됐거나 케이스가 없어짐
+            or not now[i]["deletable"]                            # 일부 영상만 복구됨
+            or now[i]["image_ids"] != before[i]["image_ids"]]     # 영상이 추가·삭제됨
 
 
 def related_refs(db, case_id: str) -> list:
@@ -124,17 +142,21 @@ def main(argv=None, *, db=None, storage_root: Path | None = None, ask=input) -> 
         print(f"원본 파일이 없는 케이스 {len(missing)}개 (오래된 순)")
         for c in missing:
             print(f"  {c['case_id']}  상태 {c['status']}  등록 {c['created_at']}  "
-                  f"등록자 {c['created_by']}  영상 {c['images']}개 중 {c['missing']}개 없음")
+                  f"등록자 {c['created_by']}  영상 {c['images']}개 중 {c['missing']}개 없음"
+                  + ("" if c["deletable"] else "  (일부 파일이 있어 삭제 불가)"))
 
     if not args.delete:
         if missing:
             print("\n지우려면: --delete 케이스번호 ... (서버에서만)")
         return missing
 
-    allowed = {c["case_id"] for c in missing}
-    wrong = [i for i in args.delete if i not in allowed]
+    before = {c["case_id"]: c for c in missing}
+    wrong = [i for i in args.delete if i not in before]
     if wrong:
         sys.exit(f"목록에 없는 케이스는 지울 수 없습니다 (파일이 있거나 없는 번호): {', '.join(wrong)}")
+    partial = [i for i in args.delete if not before[i]["deletable"]]
+    if partial:
+        sys.exit(f"일부 영상 파일이 남아 있는 케이스는 지울 수 없습니다: {', '.join(partial)}")
     print(f"\n지울 케이스 {len(args.delete)}개: {', '.join(args.delete)}")
     print("케이스·영상·탐지·메모·리포트·이력·박스 판정·처리 기록이 함께 지워지고 되돌릴 수 없습니다.")
     if ask("계속하려면 '삭제' 를 입력하세요: ").strip() != "삭제":
@@ -142,10 +164,9 @@ def main(argv=None, *, db=None, storage_root: Path | None = None, ask=input) -> 
         return missing
 
     # 확인을 기다리는 동안 파일이 복구되거나 케이스가 바뀌었을 수 있으니 지우기 직전에 다시 검사한다.
-    still = {c["case_id"] for c in find_missing(db, Path(storage_root))}
-    changed = [i for i in args.delete if i not in still]
+    changed = recheck(db, Path(storage_root), before, args.delete)
     if changed:
-        sys.exit(f"확인하는 동안 상태가 바뀌어 아무것도 지우지 않았습니다 (파일이 생겼거나 케이스가 없어짐): "
+        sys.exit(f"확인하는 동안 상태가 바뀌어 아무것도 지우지 않았습니다 (파일이 생겼거나 영상·케이스가 바뀜): "
                  f"{', '.join(changed)}. 목록을 다시 확인하세요.")
     try:
         print(f"삭제 완료: 문서 {delete_cases(db, args.delete)}개")

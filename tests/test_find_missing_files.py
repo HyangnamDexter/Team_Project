@@ -231,3 +231,74 @@ def test_case_removed_during_confirmation_cancels_all(setup):
     with pytest.raises(SystemExit, match="LAPTOP2"):
         main(["--delete", "LAPTOP", "LAPTOP2"], db=db, storage_root=root, ask=someone_deleted_one)
     assert remaining(db) == LAPTOP_DOCS and db.commits == 0      # 하나라도 바뀌면 전부 중단
+
+
+# ---------------------------------------------------------------- 리뷰 반영 (PR #47 2차): 저장 폴더 재확인, 일부 영상만 복구
+def add_image(db, root, case_id, image_id, *, with_file):
+    db.add("images", image_id, case_id=case_id, original_dir=f"{case_id}/{image_id}/original",
+           slice_files=["0001.dcm"])
+    db.add("detections", image_id, case_id=case_id, status="done")
+    if with_file:
+        restore(root, case_id, image_id)
+
+
+def restore(root, case_id, image_id):
+    f = root / case_id / image_id / "original" / "0001.dcm"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"dicom")
+
+
+def two_image_case(db, root):
+    add_case(db, root, "TWO", "T1", with_file=False, created_at="2026-11-25")
+    add_image(db, root, "TWO", "T2", with_file=False)
+
+
+def test_storage_folder_removed_during_confirmation_cancels_delete(setup):
+    import shutil
+    db, root = setup
+
+    def remove_storage(_):
+        shutil.rmtree(root)          # 폴더가 사라지면 모든 케이스가 '파일 없음'으로 보인다
+        return "삭제"
+
+    with pytest.raises(SystemExit, match="영상 저장 폴더 .* 사라져 아무것도 지우지 않았습니다"):
+        main(["--delete", "LAPTOP"], db=db, storage_root=root, ask=remove_storage)
+    assert remaining(db) == LAPTOP_DOCS and "SERVER" in db.data["cases"] and db.commits == 0
+
+
+def test_partial_restore_during_confirmation_cancels_delete(setup):
+    db, root = setup
+    two_image_case(db, root)
+
+    def restore_one(_):
+        restore(root, "TWO", "T2")   # 영상 2개 중 1개만 복구 → 여전히 목록에는 있지만 지우면 안 됨
+        return "삭제"
+
+    with pytest.raises(SystemExit, match="상태가 바뀌어 아무것도 지우지 않았습니다.*TWO"):
+        main(["--delete", "TWO", "LAPTOP"], db=db, storage_root=root, ask=restore_one)
+    assert {"T1", "T2"} <= set(db.data["images"]) and "TWO" in db.data["cases"]
+    assert remaining(db) == LAPTOP_DOCS and db.commits == 0      # 함께 고른 다른 케이스도 지우지 않음
+
+
+def test_case_with_some_files_is_listed_but_cannot_be_deleted(setup, capsys):
+    db, root = setup
+    add_case(db, root, "HALF", "H1", with_file=True, created_at="2026-11-25")
+    add_image(db, root, "HALF", "H2", with_file=False)
+    found = {c["case_id"]: c for c in find_missing(db, root)}
+    assert found["HALF"]["missing"] == 1 and not found["HALF"]["deletable"] and found["LAPTOP"]["deletable"]
+    with pytest.raises(SystemExit, match="일부 영상 파일이 남아 있는 케이스는 지울 수 없습니다: HALF"):
+        main(["--delete", "HALF"], db=db, storage_root=root, ask=lambda _: "삭제")
+    assert "삭제 불가" in capsys.readouterr().out
+    assert "HALF" in db.data["cases"] and db.commits == 0
+
+
+def test_image_added_during_confirmation_cancels_delete(setup):
+    db, root = setup
+
+    def add_new_image(_):
+        add_image(db, root, "LAPTOP", "I9", with_file=False)   # 새 영상 기록이 생김 (파일 없음이어도 목록이 달라짐)
+        return "삭제"
+
+    with pytest.raises(SystemExit, match="상태가 바뀌어"):
+        main(["--delete", "LAPTOP"], db=db, storage_root=root, ask=add_new_image)
+    assert "LAPTOP" in db.data["cases"] and db.commits == 0
