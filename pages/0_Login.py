@@ -2,9 +2,10 @@
 import streamlit as st
 
 from services.auth import AuthError, sign_in
+from core.settings import APP_DESCRIPTION
 
 st.title("🩻 교육용 웹 PACS")
-st.caption("X-ray·CT·MRI DICOM 영상 품질 점검 · 모의 케이스 전용 (실제 진단용 아님)")
+st.caption(f"{APP_DESCRIPTION} · 모의 케이스 전용 (실제 진단용 아님)")
 
 left, _ = st.columns([1, 1])
 with left:

@@ -6,6 +6,7 @@ import numpy as np
 import streamlit as st
 
 from core.dicom_io import InvalidDicomError, apply_window, auto_window, load_dicom
+from core.settings import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 from core.viewer_geometry import measure_distance, roi_from_points, viewport
 from core.workflow import PermissionDenied, READER
 from services.access import case_images, original_path
@@ -143,8 +144,8 @@ with st.sidebar:
         if file is None:
             st.info("표시할 DICOM 파일을 선택하세요.")
             st.stop()
-        if file.size > 500 * 1024 * 1024:
-            st.error("파일은 500MB 이하로 선택하세요.")
+        if file.size > MAX_UPLOAD_BYTES:
+            st.error(f"파일은 {MAX_UPLOAD_MB}MB 이하로 선택하세요.")
             st.stop()
         file_id = (file.name, sha256(file.getbuffer()).hexdigest())
         filename = file.name

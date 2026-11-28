@@ -7,6 +7,7 @@ import pydicom
 import streamlit as st
 
 from core.dicom_io import InvalidDicomError
+from core.settings import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 from core.workflow import PermissionDenied, QC_FAILED
 from services import cases, db
 from services.auth import current_user
@@ -62,8 +63,8 @@ def render_registration(user: dict) -> None:
                                   accept_multiple_files=False, key="cases_upload")
         data, modality, valid = b"", None, False
         if upload is not None:
-            if upload.size > 500 * 1024 * 1024:
-                st.error("파일은 500MB 이하로 선택하세요.")
+            if upload.size > MAX_UPLOAD_BYTES:
+                st.error(f"파일은 {MAX_UPLOAD_MB}MB 이하로 선택하세요.")
             else:
                 data = upload.getvalue()
                 try:

@@ -2,12 +2,13 @@
 import streamlit as st
 
 from core.workflow import ROLE_LABELS
+from core.settings import APP_DESCRIPTION
 from services.auth import require_login
 
 user = require_login()
 
 st.title("🩻 교육용 웹 PACS")
-st.caption("X-ray·CT·MRI DICOM 영상 품질 점검 · 모의 케이스 전용 (실제 진단용 아님)")
+st.caption(f"{APP_DESCRIPTION} · 모의 케이스 전용 (실제 진단용 아님)")
 
 st.success(f"{user['email']} 님, {ROLE_LABELS.get(user['role'], user['role'])} 역할로 로그인했습니다.")
 st.markdown(

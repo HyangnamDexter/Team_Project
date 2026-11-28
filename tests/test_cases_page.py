@@ -237,3 +237,25 @@ def test_registration_displays_each_detection_outcome_without_repeating_registra
     assert all("private server detail" not in item.value for item in [*app.warning, *app.info])
     app.run()
     assert save.call_count == 1 and register_button(app).disabled
+
+
+def test_registration_rejects_files_above_50mb_before_reading_content(page, monkeypatch):
+    from core.settings import MAX_UPLOAD_BYTES
+
+    class Oversized(Upload):
+        @property
+        def size(self):
+            return MAX_UPLOAD_BYTES + 1
+
+        def getvalue(self):
+            pytest.fail("크기 제한을 넘긴 파일의 내용을 읽으면 안 됨")
+
+    app, selected, _ = page
+    selected["file"] = Oversized(b"unused")
+    save = Mock()
+    monkeypatch.setattr(cases, "register_case", save)
+    app.run()
+    assert not app.exception
+    assert any("50MB 이하" in error.value for error in app.error)
+    assert register_button(app).disabled
+    save.assert_not_called()

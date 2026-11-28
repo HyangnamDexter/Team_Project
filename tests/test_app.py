@@ -23,6 +23,8 @@ def test_logged_out_shows_only_login_form():
     assert not at.exception
     assert [t.label for t in at.text_input] == ["이메일", "비밀번호"]
     assert not any(b.label == "로그아웃" for b in at.sidebar.button)
+    assert any("척추 X-ray 품질 점검과 임플란트 탐지" in c.value for c in at.caption)
+    assert all("CT·MRI" not in c.value for c in at.caption)
 
 
 @pytest.mark.parametrize("page", ["pages/0_Home.py", "pages/1_Cases.py", "pages/2_Viewer.py", "pages/3_Review.py"])
@@ -42,6 +44,7 @@ def test_logged_in_shows_home_and_logout():
     assert "관리자" in at.success[0].value
     assert any(b.label == "로그아웃" for b in at.sidebar.button)
     assert len(at.text_input) == 0  # 로그인 폼 없음
+    assert any("척추 X-ray 품질 점검과 임플란트 탐지" in c.value for c in at.caption)
 
 
 @pytest.mark.parametrize(

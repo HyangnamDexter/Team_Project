@@ -79,6 +79,22 @@ def test_auto_window_without_ct_controls(viewer):
     assert viewer.number_input(key="viewer_center").value == 50.0
 
 
+def test_viewer_upload_limit_is_50mb_before_decoding(viewer, monkeypatch):
+    from io import BytesIO
+    import streamlit as st
+    from core.settings import MAX_UPLOAD_BYTES
+
+    class Oversized(BytesIO):
+        name = "too_big.dicom"
+        size = MAX_UPLOAD_BYTES + 1
+
+    monkeypatch.setattr(st, "file_uploader", lambda *args, **kwargs: Oversized(b"unused"))
+    viewer.session_state["viewer_source"] = "파일 업로드"
+    viewer.run()
+    assert not viewer.exception
+    assert [e.value for e in viewer.error] == ["파일은 50MB 이하로 선택하세요."]
+
+
 def test_invalid_file_shows_error(viewer, monkeypatch):
     def reject(file):
         raise dicom_io.InvalidDicomError("지원하지 않는 파일입니다.")
