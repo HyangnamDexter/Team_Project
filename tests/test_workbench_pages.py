@@ -102,6 +102,25 @@ def test_box_verdict_form_persists_and_reloads(screen):
     assert any("저장된 판정: 오검출" in c.value for c in app.caption)
 
 
+def test_case_participants_and_times_are_human_readable_for_non_manager(screen):
+    from datetime import datetime, timezone
+    from test_review import TECH
+
+    open_page, database, _ = screen
+    when = datetime(2026, 11, 28, 4, 6, 15, 836185, tzinfo=timezone.utc)
+    database.data["notes"]["N1"] = {"case_id": "C1", "type": "memo", "content": "표시 확인",
+        "author_uid": "m1", "created_at": when,
+        "edits": [{"before": "이전 메모", "by": "m1", "at": when}]}
+    database.data["case_history"]["H1"] = {"case_id": "C1", "actor_uid": "t1", "at": when,
+        "from_status": "접수", "to_status": "검토 중", "reason": "표시 확인"}
+    app = open_page("pages/3_Review.py", user=TECH)
+    assert not app.exception and not app.error
+    assert next(m for m in app.metric if m.label == "담당 판독의").value == "r1@test.com"
+    assert any("m1@test.com · 2026-11-28 13:06:15" in e.label for e in app.expander)
+    assert any("2026-11-28 13:06:15" in t.value and "t1@test.com" in t.value for t in app.text)
+    assert any("이전 내용 · 2026-11-28 13:06:15 · m1@test.com" == c.value for c in app.caption)
+
+
 def test_missing_original_shows_actionable_message_without_local_path(screen, workbench):
     open_page, _, _ = screen
     _, root = workbench
