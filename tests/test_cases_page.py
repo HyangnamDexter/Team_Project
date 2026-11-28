@@ -32,6 +32,8 @@ def page(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "get_db", lambda: database)
     app = AppTest.from_file(APP, default_timeout=60)
     app.secrets["storage"] = {"image_dir": str(tmp_path)}
+    # 컴퓨터에 models/best.onnx 가 있어도 결과가 같도록 없는 모델 경로를 지정한다 (모델 없음 = no_model).
+    app.secrets["model"] = {"path": str(tmp_path / "no_model.onnx")}
     app.session_state["user"] = TECH
     app.switch_page("pages/1_Cases.py")
     return app, selected, database

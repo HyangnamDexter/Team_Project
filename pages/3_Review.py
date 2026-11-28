@@ -7,7 +7,7 @@ from services.db import get_db
 from services.case_people import case_user_labels
 from ui.review_tools import render_review_tools
 from services.review import (
-    ACTION_LABELS, ReviewError, assign_reader, available_actions, complete_review, list_readers,
+    ACTION_LABELS, ReviewError, assign_reader, available_actions, complete_review, done_message, list_readers,
     request_rereview, request_retake, start_review, visible_cases,
 )
 
@@ -69,7 +69,7 @@ def run(action_label, fn, *args):
     except (PermissionDenied, ReviewError) as e:
         st.error(str(e))
         return
-    st.session_state.review_msg = f"{action_label} 완료: {result['from_status']} → {result['status']}"
+    st.session_state.review_msg = done_message(action_label, result)
     st.session_state.review_ver = st.session_state.get("review_ver", 0) + 1
     st.rerun()
 

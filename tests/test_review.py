@@ -360,6 +360,20 @@ def test_available_actions(user, status, assignee, expected):
     assert available_actions(user, {"status": status, "assignee_uid": assignee}) == expected
 
 
+# ---------------------------------------------------------------- 성공 안내 문구 (Issue: "검토 완료 완료" 중복)
+@pytest.mark.parametrize("action,expected", [
+    ("assign", "배정 완료: 접수 → 배정"),
+    ("reassign", "재배정 완료: 접수 → 배정"),
+    ("start", "검토 시작 완료: 접수 → 배정"),
+    ("retake", "재촬영 요청 완료: 접수 → 배정"),
+    ("complete", "검토 완료: 접수 → 배정"),          # '완료'를 두 번 붙이지 않음
+    ("rereview", "재검토 지시 완료: 접수 → 배정"),
+])
+def test_done_message_has_no_duplicate(action, expected):
+    msg = review.done_message(review.ACTION_LABELS[action], {"from_status": RECEIVED, "status": ASSIGNED})
+    assert msg == expected and "완료 완료" not in msg
+
+
 # ---------------------------------------------------------------- 검토 화면 (Streamlit AppTest)
 @pytest.fixture
 def page(db, monkeypatch):
@@ -411,6 +425,17 @@ def test_page_complete_without_report_shows_error(db, page):
     button(at, "검토 완료").click().run()
     assert any("리포트" in e.value for e in at.error)
     assert case(db)["status"] == IN_REVIEW
+
+
+def test_page_complete_with_report_shows_single_done(db, page):
+    db.add_case("C1", IN_REVIEW, "r1")
+    db.data["notes"]["N1"] = {"case_id": "C1", "type": "report", "author_uid": "r1", "content": "요약"}
+    at = page(READER1)
+    button(at, "검토 완료").click().run()
+    assert not at.exception
+    assert case(db)["status"] == DONE
+    assert any(s.value == f"검토 완료: {IN_REVIEW} → {DONE}" for s in at.success)
+    assert not any("완료 완료" in s.value for s in at.success)
 
 
 def test_page_retake_without_reason_shows_error(db, page):
