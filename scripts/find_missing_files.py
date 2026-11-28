@@ -55,28 +55,46 @@ def find_missing(db, storage_root: Path) -> list[dict]:
 
 
 def related_refs(db, case_id: str) -> list:
-    """케이스 하나를 지울 때 함께 지울 문서 (케이스·영상·탐지·메모·이력·박스 판정·처리 기록)."""
-    refs = [db.collection("cases").document(case_id)]
+    """케이스 하나를 지울 때 함께 지울 문서를 **지울 순서대로** 돌려준다.
+
+    다른 문서를 찾는 열쇠가 되는 문서는 나중에 지운다. 중간 배치가 실패해도 남은 기록을 다시 찾을 수 있게 하기 위해서다.
+      1. 처리 기록 열쇠(processing_keys), 탐지 결과   ← processing_logs·images 를 보고 찾음
+      2. 메모·리포트, 이력, 박스 판정, 처리 기록
+      3. 영상(images)                                 ← 탐지 결과를 찾는 열쇠
+      4. 케이스(cases)                                ← 맨 마지막. 남아 있는 동안은 목록에 계속 나와 다시 지울 수 있음
+    """
+    derived, by_case, images = [], [], []
     for collection in BY_CASE:
         for snap in _where(db, collection, "case_id", case_id):
-            refs.append(db.collection(collection).document(snap.id))
+            ref = db.collection(collection).document(snap.id)
             row = snap.to_dict() or {}
             if collection == "images":
-                refs += [db.collection(c).document(snap.id) for c in BY_IMAGE]
+                images.append(ref)
+                derived += [db.collection(c).document(snap.id) for c in BY_IMAGE]
+            else:
+                by_case.append(ref)
             if collection == "processing_logs" and row.get("run_key"):
-                refs.append(db.collection("processing_keys").document(row["run_key"]))
-    return refs
+                derived.append(db.collection("processing_keys").document(row["run_key"]))
+    return derived + by_case + images + [db.collection("cases").document(case_id)]
 
 
 def delete_cases(db, case_ids: list[str]) -> int:
-    """고른 케이스의 기록을 지운다. 없는 문서를 지워도 오류가 나지 않는다. 지운 문서 수를 돌려준다."""
-    refs = [ref for case_id in case_ids for ref in related_refs(db, case_id)]
-    for start in range(0, len(refs), BATCH_LIMIT):
-        batch = db.batch()
-        for ref in refs[start:start + BATCH_LIMIT]:
-            batch.delete(ref)
-        batch.commit()
-    return len(refs)
+    """고른 케이스의 기록을 지운다. 지운 문서 수를 돌려준다.
+
+    케이스 하나씩 끝까지 지우고 다음 케이스로 넘어간다. 도중에 실패하면 예외가 그대로 올라가고,
+    케이스 문서는 마지막에 지우므로 다시 실행하면 목록에 다시 나와 남은 기록부터 이어서 지울 수 있다.
+    없는 문서를 지워도 오류가 나지 않는다 (Firestore delete).
+    """
+    total = 0
+    for case_id in case_ids:
+        refs = related_refs(db, case_id)
+        for start in range(0, len(refs), BATCH_LIMIT):
+            batch = db.batch()
+            for ref in refs[start:start + BATCH_LIMIT]:
+                batch.delete(ref)
+            batch.commit()
+        total += len(refs)
+    return total
 
 
 def load_storage_root() -> Path:
@@ -122,7 +140,18 @@ def main(argv=None, *, db=None, storage_root: Path | None = None, ask=input) -> 
     if ask("계속하려면 '삭제' 를 입력하세요: ").strip() != "삭제":
         print("취소했습니다. 아무것도 지우지 않았습니다.")
         return missing
-    print(f"삭제 완료: 문서 {delete_cases(db, args.delete)}개")
+
+    # 확인을 기다리는 동안 파일이 복구되거나 케이스가 바뀌었을 수 있으니 지우기 직전에 다시 검사한다.
+    still = {c["case_id"] for c in find_missing(db, Path(storage_root))}
+    changed = [i for i in args.delete if i not in still]
+    if changed:
+        sys.exit(f"확인하는 동안 상태가 바뀌어 아무것도 지우지 않았습니다 (파일이 생겼거나 케이스가 없어짐): "
+                 f"{', '.join(changed)}. 목록을 다시 확인하세요.")
+    try:
+        print(f"삭제 완료: 문서 {delete_cases(db, args.delete)}개")
+    except Exception as exc:
+        sys.exit(f"삭제 도중 실패했습니다 ({type(exc).__name__}). 케이스 문서는 마지막에 지우므로 "
+                 f"같은 명령을 다시 실행하면 남은 기록부터 이어서 지웁니다.")
     return missing
 
 
