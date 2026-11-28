@@ -102,6 +102,30 @@ def test_box_verdict_form_persists_and_reloads(screen):
     assert any("저장된 판정: 오검출" in c.value for c in app.caption)
 
 
+def test_box_verdict_label_refresh_keeps_second_box_selected(screen):
+    open_page, database, _ = screen
+    database.data["detections"]["I1"]["boxes"].append(
+        {"xmin": 30, "ymin": 32, "xmax": 40, "ymax": 42, "score": .7})
+    app = open_page("pages/3_Review.py")
+    box = next(s for s in app.selectbox if s.label == "탐지 박스")
+    box.set_value(1).run()
+    old_key = next(s for s in app.selectbox if s.label == "탐지 박스").key
+    next(r for r in app.radio if r.label == "판정").set_value("오검출")
+    button(app, "박스 검토 저장").click().run()
+    assert not app.exception and not app.error
+    box = next(s for s in app.selectbox if s.label == "탐지 박스")
+    assert box.key != old_key and box.value == 1
+    assert box.options == ["박스 1 · 미검토", "박스 2 · 오검출"]
+    app.run()
+    assert next(s for s in app.selectbox if s.label == "탐지 박스").value == 1
+    # 같은 박스 판정을 다시 바꿔도 라벨과 선택이 함께 갱신된다.
+    next(r for r in app.radio if r.label == "판정").set_value("맞음")
+    button(app, "박스 검토 저장").click().run()
+    box = next(s for s in app.selectbox if s.label == "탐지 박스")
+    assert not app.exception and box.value == 1
+    assert box.options[1] == "박스 2 · 맞음"
+
+
 def test_case_participants_and_times_are_human_readable_for_non_manager(screen):
     from datetime import datetime, timezone
     from test_review import TECH

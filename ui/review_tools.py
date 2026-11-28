@@ -1,5 +1,7 @@
 """검토 화면의 메모·리포트·탐지 오검출 검토·처리 이력 패널."""
 from pathlib import Path
+from hashlib import sha256
+import json
 
 import streamlit as st
 
@@ -75,9 +77,19 @@ def render_box_reviews(user, image_id, case, db, root, user_labels=None):
     rows = box_review.list_box_reviews(user, image_id, db=db)
     current = {r["box_index"]: r for r in rows if r["source"] == source and r["fingerprint"] == signature}
     st.caption(f"전체 {len(doc['boxes'])}개 · 검토 완료 {len(current)}개")
+    selection_context = (user["uid"], image_id, source, signature)
+    previous = st.session_state.get("review_box_choice", {})
+    picked = previous.get("index", 0) if previous.get("context") == selection_context else 0
+    if picked not in range(len(doc["boxes"])):
+        picked = 0
+    verdicts = [current.get(i, {}).get("verdict", "미검토") for i in range(len(doc["boxes"]))]
+    revision = sha256(json.dumps(verdicts, ensure_ascii=False).encode()).hexdigest()[:12]
+    # 표시 문구가 바뀌면 위젯을 새로 만들되, 별도로 보관한 박스 번호를 유지한다.
     index = st.selectbox("탐지 박스", list(range(len(doc["boxes"]))),
+                         index=picked,
                          format_func=lambda i: f"박스 {i + 1} · {current.get(i, {}).get('verdict', '미검토')}",
-                         key=f"review_box_{image_id}_{source}_{signature[:12]}")
+                         key=f"review_box_{image_id}_{source}_{signature[:12]}_{revision}")
+    st.session_state.review_box_choice = {"context": selection_context, "index": index}
     # 선택한 박스만 보여 주어 밀집된 OpenCV 후보도 한 개씩 확인할 수 있다.
     from services.access import visible_image
     image_doc = visible_image(user, image_id, db=db)
@@ -96,7 +108,7 @@ def render_box_reviews(user, image_id, case, db, root, user_labels=None):
         st.caption(f"저장된 판정: {current[index]['verdict']} · "
                    f"{user_labels.get(current[index]['reviewed_by'], UNKNOWN_USER)}")
     if can_edit(user, case):
-        with st.form(f"box_verdict_{image_id}_{source}_{signature[:12]}_{index}"):
+        with st.form(f"box_verdict_{image_id}_{source}_{signature[:12]}_{revision}_{index}"):
             verdict = st.radio("판정", ["맞음", "오검출"],
                                index=1 if current.get(index, {}).get("verdict") == "오검출" else 0,
                                horizontal=True)
