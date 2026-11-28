@@ -67,7 +67,8 @@ def save_note(user, case_id, content, kind="memo", *, db, note_id=None, expected
                "updated_at": now, "image_id": None, "log_id": None, "slice_index": None}
         tx.set(ref, doc)
         tx.set(history_ref, {"case_id": case_id, "from_status": case["status"],
-                            "to_status": case["status"], "reason": "메모 수정" if before else "메모 작성",
+                            "to_status": case["status"],
+                            "reason": f"{'리포트' if kind == 'report' else '메모'} {'수정' if before else '작성'}",
                             "extra": {"note_id": ref.id, "type": kind}, "actor_uid": user["uid"], "at": now})
         return dict(doc, note_id=ref.id)
 

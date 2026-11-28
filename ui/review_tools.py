@@ -55,7 +55,7 @@ def render_notes(user, case_id, case, db, user_labels=None):
                         try:
                             notes.save_note(user, case_id, content, row["type"], db=db,
                                             note_id=row["note_id"], expected_content=row["content"])
-                            st.session_state.review_msg = "메모 수정 완료"
+                            st.session_state.review_msg = f"{title} 수정 완료"
                             st.rerun()
                         except Exception as exc:
                             st.error(_message(exc))
